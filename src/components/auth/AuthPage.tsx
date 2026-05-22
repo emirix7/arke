@@ -43,7 +43,7 @@ export default function AuthPage() {
 
         if (data.user) {
           // Create profile
-          await supabase.from('profiles').insert({
+          await (supabase.from('profiles') as any).insert({
             id: data.user.id,
             username: username.toLowerCase().trim(),
             display_name: username.trim(),
