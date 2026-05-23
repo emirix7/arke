@@ -10,5 +10,9 @@
     "files": [
       "static/chunks/_app-pages-browser_node_modules_emoji-mart_react_dist_module_js.js"
     ]
+  },
+  "components/layout/AppShell.tsx -> @/lib/supabase": {
+    "id": "components/layout/AppShell.tsx -> @/lib/supabase",
+    "files": []
   }
 }

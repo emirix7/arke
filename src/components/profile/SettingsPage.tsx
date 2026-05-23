@@ -20,6 +20,8 @@ export default function SettingsPage() {
   const [pwError, setPwError] = useState('')
   const [pwSuccess, setPwSuccess] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [pttKey, setPttKey] = useState(typeof window !== 'undefined' ? localStorage.getItem('arke_ptt_key') || 'v' : 'v')
+  const [recordingPtt, setRecordingPtt] = useState(false)
   const [saved, setSaved] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
   const [bannerUploading, setBannerUploading] = useState(false)
@@ -199,6 +201,33 @@ export default function SettingsPage() {
                 style={{ marginTop: 10, width: '100%', padding: '10px 0', borderRadius: 12, fontSize: 13, fontWeight: 600, background: (currentPassword && newPassword) ? 'linear-gradient(135deg, #c044ff, #00d4ff)' : 'rgba(255,255,255,0.05)', color: (currentPassword && newPassword) ? 'white' : 'rgba(255,255,255,0.3)', border: 'none', cursor: (currentPassword && newPassword) ? 'pointer' : 'not-allowed' }}>
                 Şifreyi Güncelle
               </button>
+            </Field>
+          </div>
+
+          {/* PTT Settings */}
+          <div style={{ background: '#10101c', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 20, marginBottom: 12 }}>
+            <Field label="Bas-Konuş Tuşu">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ flex: 1, padding: '10px 14px', borderRadius: 12, background: 'rgba(255,255,255,0.05)', border: `1px solid ${recordingPtt ? 'rgba(192,68,255,0.5)' : 'rgba(255,255,255,0.08)'}`, color: recordingPtt ? '#c044ff' : '#e8e6f0', fontSize: 14, textAlign: 'center', fontWeight: 600 }}>
+                  {recordingPtt ? 'Bir tuşa bas...' : pttKey.toUpperCase()}
+                </div>
+                <button
+                  onClick={() => {
+                    setRecordingPtt(true)
+                    const handler = (e: KeyboardEvent) => {
+                      e.preventDefault()
+                      setPttKey(e.key.toLowerCase())
+                      localStorage.setItem('arke_ptt_key', e.key.toLowerCase())
+                      setRecordingPtt(false)
+                      window.removeEventListener('keydown', handler)
+                    }
+                    window.addEventListener('keydown', handler)
+                  }}
+                  style={{ padding: '10px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, background: 'rgba(192,68,255,0.12)', border: '1px solid rgba(192,68,255,0.25)', color: '#c044ff', cursor: 'pointer', flexShrink: 0 }}>
+                  {recordingPtt ? 'İptal' : 'Değiştir'}
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>Sesli kanalda Bas-Konuş modunu aktif edince bu tuşa basılı tut</p>
             </Field>
           </div>
 

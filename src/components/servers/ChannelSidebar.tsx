@@ -29,7 +29,18 @@ export default function ChannelSidebar({ onChannelSelect }: { onChannelSelect?: 
 
   useEffect(() => {
     if (!activeServer) return
+    // Initial fetch
     channels.filter(c => c.type === 'voice').forEach(vc => fetchVoiceMembers(vc.id))
+
+    // Realtime updates for voice sessions
+    const ch = supabase.channel(`sidebar_voice:${activeServer.id}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'voice_sessions',
+      }, () => {
+        channels.filter(c => c.type === 'voice').forEach(vc => fetchVoiceMembers(vc.id))
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
   }, [channels, activeServer?.id])
 
   const fetchChannels = async () => {
