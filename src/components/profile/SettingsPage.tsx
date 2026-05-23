@@ -2,6 +2,7 @@
 import { useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
+import { Check, AlertCircle } from 'lucide-react'
 
 export default function SettingsPage() {
   const { profile, updateProfile } = useAuthStore()
@@ -9,6 +10,15 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState(profile?.display_name ?? '')
   const [customStatus, setCustomStatus] = useState(profile?.custom_status ?? '')
   const [msgPerm, setMsgPerm] = useState<'everyone' | 'friends'>(profile?.allow_messages_from ?? 'everyone')
+  const [newUsername, setNewUsername] = useState('')
+  const [usernameError, setUsernameError] = useState('')
+  const [usernameSuccess, setUsernameSuccess] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [showCurrentPw, setShowCurrentPw] = useState(false)
+  const [showNewPw, setShowNewPw] = useState(false)
+  const [pwError, setPwError] = useState('')
+  const [pwSuccess, setPwSuccess] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
@@ -16,145 +26,225 @@ export default function SettingsPage() {
   const avatarRef = useRef<HTMLInputElement>(null)
   const bannerRef = useRef<HTMLInputElement>(null)
 
-  const uploadFile = async (file: File, bucket: string, path: string): Promise<string | null> => {
+  const uploadFile = async (file: File, bucket: string, path: string) => {
     const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: true })
-    if (error) { console.error(error); return null }
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path)
-    return data.publicUrl
+    if (error) return null
+    return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl
   }
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !profile) return
+    const file = e.target.files?.[0]; if (!file || !profile) return
     setAvatarUploading(true)
-    const ext = file.name.split('.').pop()
-    const url = await uploadFile(file, 'avatars', `${profile.id}/avatar.${ext}`)
+    const url = await uploadFile(file, 'avatars', `${profile.id}/avatar.${file.name.split('.').pop()}`)
     if (url) await updateProfile({ avatar_url: url })
     setAvatarUploading(false)
   }
 
   const handleBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !profile) return
+    const file = e.target.files?.[0]; if (!file || !profile) return
     setBannerUploading(true)
-    const ext = file.name.split('.').pop()
-    const url = await uploadFile(file, 'banners', `${profile.id}/banner.${ext}`)
+    const url = await uploadFile(file, 'banners', `${profile.id}/banner.${file.name.split('.').pop()}`)
     if (url) await updateProfile({ banner_url: url })
     setBannerUploading(false)
+  }
+
+  const handleChangeUsername = async () => {
+    if (!newUsername.trim() || !profile) return
+    setUsernameError(''); setUsernameSuccess(false)
+    const clean = newUsername.trim().toLowerCase()
+    if (!/^[a-z0-9._]+$/.test(clean)) { setUsernameError('Sadece harf, rakam, nokta ve alt çizgi kullanabilirsin.'); return }
+    const { data: existing } = await supabase.from('profiles').select('id').eq('username', clean).single()
+    if (existing) { setUsernameError('Bu kullanıcı adı alınmış.'); return }
+    await updateProfile({ username: clean, display_name: clean })
+    setUsernameSuccess(true)
+    setNewUsername('')
+    setTimeout(() => setUsernameSuccess(false), 3000)
+  }
+
+  const handleChangePassword = async () => {
+    if (!currentPassword || !newPassword) return
+    if (newPassword.length < 8) { setPwError('Yeni şifre en az 8 karakter olmalı.'); return }
+    setPwError(''); setPwSuccess(false)
+    const fakeEmail = `${profile?.username}@arke.app`
+    // Verify current password by signing in
+    const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: fakeEmail, password: currentPassword })
+    if (verifyErr) { setPwError('Mevcut şifre hatalı.'); return }
+    // Update password
+    const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword })
+    if (updateErr) { setPwError('Şifre güncellenemedi.'); return }
+    setPwSuccess(true)
+    setCurrentPassword('')
+    setNewPassword('')
+    setTimeout(() => setPwSuccess(false), 3000)
   }
 
   const handleSave = async () => {
     setSaving(true)
     await updateProfile({ bio, display_name: displayName, custom_status: customStatus, allow_messages_from: msgPerm })
-    setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000)
   }
 
   const initials = (profile?.username ?? '?').slice(0, 2).toUpperCase()
 
   return (
-    <div className="flex-1 overflow-y-auto" style={{ background: '#0d0d14' }}>
-      <div className="max-w-xl mx-auto px-8 py-8">
-        <h1 className="font-syne font-black text-2xl mb-6" style={{ color: '#f0eeff' }}>Profil Ayarları</h1>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0d0d14', overflow: 'hidden' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        <div style={{ maxWidth: 560, margin: '0 auto', padding: '32px 32px 16px' }}>
+          <h1 className="font-syne font-black text-2xl mb-5" style={{ color: '#f0eeff' }}>Profil Ayarları</h1>
 
-        {/* Banner */}
-        <div className="rounded-2xl overflow-hidden mb-4 relative group cursor-pointer"
-          style={{ height: 120, background: '#10101c', border: '1px solid rgba(255,255,255,0.07)' }}
-          onClick={() => bannerRef.current?.click()}>
-          {profile?.banner_url
-            ? <img src={profile.banner_url} alt="" className="w-full h-full object-cover" />
-            : <div className="w-full h-full flex items-center justify-center"
-                style={{ background: 'linear-gradient(135deg, rgba(192,68,255,0.1), rgba(0,212,255,0.08))' }}>
-                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.2)' }}>Banner ekle (resim veya GIF)</p>
-              </div>}
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-            style={{ background: 'rgba(0,0,0,0.5)' }}>
-            <span className="text-sm font-medium" style={{ color: 'white' }}>
-              {bannerUploading ? 'Yükleniyor...' : '📷 Banner Değiştir'}
-            </span>
+          {/* Banner */}
+          <div style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 12, height: 110, cursor: 'pointer', position: 'relative' }}
+            onClick={() => bannerRef.current?.click()}>
+            {profile?.banner_url
+              ? <img src={profile.banner_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              : <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg, rgba(192,68,255,0.1), rgba(0,212,255,0.08))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.2)' }}>{bannerUploading ? 'Yükleniyor...' : 'Banner ekle (resim veya GIF)'}</span>
+                </div>}
+            <input ref={bannerRef} type="file" accept="image/*,.gif" style={{ display: 'none' }} onChange={handleBannerUpload} />
           </div>
-          <input ref={bannerRef} type="file" accept="image/*,.gif" className="hidden" onChange={handleBannerUpload} />
-        </div>
 
-        {/* Avatar */}
-        <div className="flex items-end gap-4 mb-6 -mt-8 px-4">
-          <div className="relative group cursor-pointer" onClick={() => avatarRef.current?.click()}>
-            <div className="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center font-bold text-2xl text-white flex-shrink-0"
-              style={{ background: 'linear-gradient(135deg, #ff6b9d, #c044ff)', border: '4px solid #0d0d14' }}>
-              {profile?.avatar_url
-                ? <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
-                : initials}
+          {/* Avatar */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, marginBottom: 20, marginTop: -36, paddingLeft: 16 }}>
+            <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => avatarRef.current?.click()}>
+              <div style={{ width: 80, height: 80, borderRadius: '50%', overflow: 'hidden', background: 'linear-gradient(135deg, #ff6b9d, #c044ff)', border: '4px solid #0d0d14', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 700, color: 'white' }}>
+                {profile?.avatar_url ? <img src={profile.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}
+              </div>
+              <input ref={avatarRef} type="file" accept="image/*,.gif" style={{ display: 'none' }} onChange={handleAvatarUpload} />
             </div>
-            <div className="absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ background: 'rgba(0,0,0,0.6)' }}>
-              <span style={{ fontSize: 20 }}>{avatarUploading ? '⏳' : '📷'}</span>
+            <div style={{ paddingBottom: 4 }}>
+              <p className="font-syne font-bold" style={{ color: '#f0eeff' }}>@{profile?.username}</p>
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>{avatarUploading ? 'Yükleniyor...' : 'Fotoğraf veya GIF için tıkla'}</p>
             </div>
-            <input ref={avatarRef} type="file" accept="image/*,.gif" className="hidden" onChange={handleAvatarUpload} />
           </div>
-          <div className="pb-1">
-            <p className="font-syne font-bold" style={{ color: '#f0eeff' }}>{profile?.username}</p>
-            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>Profil fotoğrafını veya GIF'ini değiştirmek için tıkla</p>
+
+          {/* Username change */}
+          <div style={{ background: '#10101c', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 20, marginBottom: 12 }}>
+            <Field label="Kullanıcı Adını Değiştir">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={newUsername} onChange={e => { setNewUsername(e.target.value); setUsernameError('') }}
+                  placeholder={`Mevcut: ${profile?.username}`} maxLength={24}
+                  className="arke-input" style={{ flex: 1 }}
+                  onKeyDown={e => e.key === 'Enter' && handleChangeUsername()} />
+                <button onClick={handleChangeUsername} disabled={!newUsername.trim()}
+                  style={{ padding: '10px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, background: newUsername.trim() ? 'linear-gradient(135deg, #c044ff, #00d4ff)' : 'rgba(255,255,255,0.05)', color: newUsername.trim() ? 'white' : 'rgba(255,255,255,0.3)', border: 'none', cursor: newUsername.trim() ? 'pointer' : 'not-allowed', flexShrink: 0 }}>
+                  Değiştir
+                </button>
+              </div>
+              {usernameError && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                  <AlertCircle size={12} strokeWidth={2} style={{ color: '#ff6b9d' }} />
+                  <p style={{ fontSize: 11, color: '#ff6b9d' }}>{usernameError}</p>
+                </div>
+              )}
+              {usernameSuccess && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                  <Check size={12} strokeWidth={2.5} style={{ color: '#3dff9a' }} />
+                  <p style={{ fontSize: 11, color: '#3dff9a' }}>Kullanıcı adı güncellendi!</p>
+                </div>
+              )}
+            </Field>
           </div>
-        </div>
 
-        {/* Form */}
-        <div className="flex flex-col gap-4 rounded-2xl p-5"
-          style={{ background: '#10101c', border: '1px solid rgba(255,255,255,0.07)' }}>
+          {/* Password change */}
+          <div style={{ background: '#10101c', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 20, marginBottom: 12 }}>
+            <Field label="Şifre Değiştir">
+              <div style={{ position: 'relative', marginBottom: 8 }}>
+                <input
+                  type={showCurrentPw ? 'text' : 'password'}
+                  value={currentPassword}
+                  onChange={e => { setCurrentPassword(e.target.value); setPwError('') }}
+                  placeholder="Mevcut şifre"
+                  className="arke-input"
+                  style={{ paddingRight: 40 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrentPw(p => !p)}
+                  style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', fontSize: 12 }}>
+                  {showCurrentPw ? '🙈' : '👁️'}
+                </button>
+              </div>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showNewPw ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={e => { setNewPassword(e.target.value); setPwError('') }}
+                  placeholder="Yeni şifre (min 8 karakter)"
+                  className="arke-input"
+                  style={{ paddingRight: 40 }}
+                  onKeyDown={e => e.key === 'Enter' && handleChangePassword()}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPw(p => !p)}
+                  style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', fontSize: 12 }}>
+                  {showNewPw ? '🙈' : '👁️'}
+                </button>
+              </div>
+              {pwError && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                  <AlertCircle size={12} strokeWidth={2} style={{ color: '#ff6b9d' }} />
+                  <p style={{ fontSize: 11, color: '#ff6b9d' }}>{pwError}</p>
+                </div>
+              )}
+              {pwSuccess && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                  <Check size={12} strokeWidth={2.5} style={{ color: '#3dff9a' }} />
+                  <p style={{ fontSize: 11, color: '#3dff9a' }}>Şifre güncellendi!</p>
+                </div>
+              )}
+              <button
+                onClick={handleChangePassword}
+                disabled={!currentPassword || !newPassword}
+                style={{ marginTop: 10, width: '100%', padding: '10px 0', borderRadius: 12, fontSize: 13, fontWeight: 600, background: (currentPassword && newPassword) ? 'linear-gradient(135deg, #c044ff, #00d4ff)' : 'rgba(255,255,255,0.05)', color: (currentPassword && newPassword) ? 'white' : 'rgba(255,255,255,0.3)', border: 'none', cursor: (currentPassword && newPassword) ? 'pointer' : 'not-allowed' }}>
+                Şifreyi Güncelle
+              </button>
+            </Field>
+          </div>
 
-          <Field label="Görünen Ad">
-            <input value={displayName} onChange={e => setDisplayName(e.target.value)}
-              placeholder={profile?.username} maxLength={32} className="arke-input" />
-          </Field>
-
-          <Field label="Özel Durum">
-            <input value={customStatus} onChange={e => setCustomStatus(e.target.value)}
-              placeholder="ne yapıyorsun?" maxLength={64} className="arke-input" />
-          </Field>
-
-          <Field label="Biyografi">
-            <textarea value={bio} onChange={e => setBio(e.target.value)}
-              placeholder="Kendinden bahset..." maxLength={190} rows={3}
-              className="arke-input resize-none" />
-          </Field>
-
-          <Field label="Kimler Mesaj Atabilir?">
-            <div className="flex gap-2">
-              {(['everyone', 'friends'] as const).map(opt => (
-                <button key={opt} onClick={() => setMsgPerm(opt)}
-                  className="flex-1 py-2 rounded-xl text-sm font-medium transition-all duration-150"
-                  style={{
+          {/* Profile form */}
+          <div style={{ background: '#10101c', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <Field label="Görünen Ad">
+              <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder={profile?.username} maxLength={32} className="arke-input" />
+            </Field>
+            <Field label="Özel Durum">
+              <input value={customStatus} onChange={e => setCustomStatus(e.target.value)} placeholder="ne yapıyorsun?" maxLength={64} className="arke-input" />
+            </Field>
+            <Field label="Biyografi">
+              <textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Kendinden bahset..." maxLength={190} rows={3} className="arke-input" style={{ resize: 'none' }} />
+            </Field>
+            <Field label="Kimler Mesaj Atabilir?">
+              <div style={{ display: 'flex', gap: 8 }}>
+                {(['everyone', 'friends'] as const).map(opt => (
+                  <button key={opt} onClick={() => setMsgPerm(opt)} style={{
+                    flex: 1, padding: '8px 0', borderRadius: 12, fontSize: 13, fontWeight: 500, cursor: 'pointer',
                     background: msgPerm === opt ? 'rgba(192,68,255,0.15)' : 'rgba(255,255,255,0.04)',
                     border: `1px solid ${msgPerm === opt ? 'rgba(192,68,255,0.3)' : 'rgba(255,255,255,0.07)'}`,
                     color: msgPerm === opt ? '#c044ff' : 'rgba(255,255,255,0.4)',
                   }}>
-                  {opt === 'everyone' ? 'Herkes' : 'Sadece Arkadaşlar'}
-                </button>
-              ))}
-            </div>
-          </Field>
+                    {opt === 'everyone' ? 'Herkes' : 'Sadece Arkadaşlar'}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          </div>
+        </div>
+      </div>
 
-          <button onClick={handleSave} disabled={saving}
-            className="py-3 rounded-xl font-semibold text-sm text-white transition-all duration-150 mt-1"
-            style={{ background: saved ? 'rgba(61,255,154,0.3)' : 'linear-gradient(135deg, #c044ff, #00d4ff)', cursor: 'pointer' }}>
+      <div style={{ flexShrink: 0, padding: '12px 32px 20px', borderTop: '1px solid rgba(255,255,255,0.06)', background: '#0d0d14' }}>
+        <div style={{ maxWidth: 560, margin: '0 auto' }}>
+          <button onClick={handleSave} disabled={saving} style={{
+            width: '100%', padding: '12px 0', borderRadius: 12, fontWeight: 600, fontSize: 14,
+            color: saved ? '#0d0d14' : 'white', cursor: 'pointer', border: 'none',
+            background: saved ? '#3dff9a' : saving ? 'rgba(192,68,255,0.3)' : 'linear-gradient(135deg, #c044ff, #00d4ff)',
+          }}>
             {saving ? 'Kaydediliyor...' : saved ? '✓ Kaydedildi' : 'Kaydet'}
           </button>
         </div>
       </div>
 
       <style>{`
-        .arke-input {
-          width: 100%;
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 12px;
-          padding: 10px 14px;
-          color: #e8e6f0;
-          font-family: DM Sans, sans-serif;
-          font-size: 14px;
-          outline: none;
-          transition: border-color 0.2s;
-        }
+        .arke-input { width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px 14px; color: #e8e6f0; font-family: DM Sans, sans-serif; font-size: 14px; outline: none; box-sizing: border-box; }
         .arke-input:focus { border-color: rgba(192,68,255,0.5); }
         .arke-input::placeholder { color: rgba(255,255,255,0.25); }
       `}</style>
@@ -164,9 +254,8 @@ export default function SettingsPage() {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-xs font-semibold tracking-widest uppercase"
-        style={{ color: 'rgba(255,255,255,0.3)' }}>{label}</label>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)' }}>{label}</label>
       {children}
     </div>
   )
