@@ -1,1 +1,4 @@
-{}
+{
+  "/page": "app/page.js",
+  "/api/livekit-token/route": "app/api/livekit-token/route.js"
+}

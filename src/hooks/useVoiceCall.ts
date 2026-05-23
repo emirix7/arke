@@ -49,7 +49,7 @@ export function useVoiceCall(targetUserId: string) {
   useEffect(() => {
     if (!profile) return
     const channel = supabase
-      .channel(`calls:${profile.id}`)
+      .channel(`calls:${profile.id}:${Math.random().toString(36).slice(2)}`)
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'call_signals',
         filter: `receiver_id=eq.${profile.id}`,
@@ -138,3 +138,51 @@ export function useVoiceCall(targetUserId: string) {
 
 // Export for use in AppShell
 export { globalCallState, setGlobalCall, defaultState }
+
+// Separate hook for AppShell - only reads global state, no new subscriptions
+export function useGlobalVoiceCall() {
+  const { profile } = require('@/store/auth').useAuthStore()
+  const [callState, setLocalState] = useState<CallState>(globalCallState)
+
+  useEffect(() => {
+    const listener = (s: CallState) => setLocalState({ ...s })
+    listeners.add(listener)
+    return () => { listeners.delete(listener) }
+  }, [])
+
+  const acceptCall = useCallback(async () => {
+    const state = globalCallState
+    if (!state.callId || !profile) return
+    stopCallRinging(); playCallConnected()
+    const { getLiveKitToken } = await import('@/lib/livekit')
+    const token = await getLiveKitToken(state.roomName, profile.id)
+    if (!token) return
+    const { supabase: sb } = await import('@/lib/supabase')
+    await sb.from('call_signals').update({ status: 'accepted' }).eq('id', state.callId)
+    setGlobalCall({ status: 'connected', token })
+  }, [profile])
+
+  const declineCall = useCallback(async () => {
+    const state = globalCallState
+    if (!state.callId) return
+    stopCallRinging()
+    const { supabase: sb } = await import('@/lib/supabase')
+    await sb.from('call_signals').update({ status: 'declined' }).eq('id', state.callId)
+    setGlobalCall({ ...defaultState })
+  }, [])
+
+  const endCall = useCallback(async () => {
+    const state = globalCallState
+    stopCallRinging(); stopDialing()
+    if (state.callId) {
+      const { supabase: sb } = await import('@/lib/supabase')
+      await sb.from('call_signals').update({ status: 'ended' }).eq('id', state.callId)
+    }
+    setGlobalCall({ ...defaultState })
+  }, [])
+
+  const toggleMute = useCallback(() => setGlobalCall({ muted: !globalCallState.muted }), [])
+  const toggleDeafen = useCallback(() => setGlobalCall({ deafened: !globalCallState.deafened }), [])
+
+  return { callState, acceptCall, declineCall, endCall, toggleMute, toggleDeafen }
+}

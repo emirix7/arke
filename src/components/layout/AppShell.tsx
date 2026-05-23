@@ -18,7 +18,7 @@ import { useReconnect } from '@/hooks/useReconnect'
 import { useRealtimeUpdates } from '@/hooks/useRealtimeUpdates'
 import { Volume2, PhoneOff, Mic, MicOff } from 'lucide-react'
 import VoiceCallOverlay from '@/components/chat/VoiceCallOverlay'
-import { useVoiceCall } from '@/hooks/useVoiceCall'
+import { useGlobalVoiceCall } from '@/hooks/useVoiceCall'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
 import type { Server, Channel } from '@/types/server'
@@ -36,8 +36,8 @@ export default function AppShell() {
   useReconnect()
   useRealtimeUpdates()
 
-  // Global 1:1 call state
-  const { callState, acceptCall: acceptVoiceCall, declineCall: declineVoiceCall, endCall, toggleMute: toggleCallMute, toggleDeafen: toggleCallDeafen } = useVoiceCall('')
+  // Global 1:1 call state - use dedicated hook
+  const { callState, acceptCall: acceptVoiceCall, declineCall: declineVoiceCall, endCall, toggleMute: toggleCallMute, toggleDeafen: toggleCallDeafen } = useGlobalVoiceCall()
 
   // Persistent voice channel state
   const [activeVoiceChannel, setActiveVoiceChannel] = useState<Channel | null>(null)
