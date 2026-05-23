@@ -1,8 +1,8 @@
 'use client'
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { getLiveKitToken } from '@/lib/livekit'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
+import { getLiveKitToken } from '@/lib/livekit'
 import { startCallRinging, stopCallRinging, startDialing, stopDialing, playCallConnected } from '@/lib/notificationSound'
 
 export type CallStatus = 'idle' | 'calling' | 'ringing' | 'connected' | 'ended'
@@ -24,14 +24,32 @@ const defaultState: CallState = {
   muted: false, deafened: false, callId: null, isIncoming: false, callerProfile: null,
 }
 
+// Global call state - persists across navigation
+let globalCallState: CallState = { ...defaultState }
+const listeners = new Set<(s: CallState) => void>()
+
+function setGlobalCall(update: Partial<CallState>) {
+  globalCallState = { ...globalCallState, ...update }
+  listeners.forEach(fn => fn(globalCallState))
+}
+
 export function useVoiceCall(targetUserId: string) {
   const { profile } = useAuthStore()
-  const [callState, setCallState] = useState<CallState>(defaultState)
+  const [callState, setCallState] = useState<CallState>(globalCallState)
+  const reconnectTimer = useRef<NodeJS.Timeout>()
 
+  // Subscribe to global state
+  useEffect(() => {
+    const listener = (s: CallState) => setCallState({ ...s })
+    listeners.add(listener)
+    return () => { listeners.delete(listener) }
+  }, [])
+
+  // Listen for call signals
   useEffect(() => {
     if (!profile) return
     const channel = supabase
-      .channel(`incoming_calls:${profile.id}`)
+      .channel(`calls:${profile.id}`)
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'call_signals',
         filter: `receiver_id=eq.${profile.id}`,
@@ -39,27 +57,33 @@ export function useVoiceCall(targetUserId: string) {
         const signal = payload.new as any
         if (signal.status !== 'ringing') return
         const { data: caller } = await supabase.from('profiles').select('username, avatar_url').eq('id', signal.caller_id).single()
-        setCallState({ ...defaultState, active: true, status: 'ringing', roomName: signal.room_name, callId: signal.id, isIncoming: true, callerProfile: caller })
+        setGlobalCall({ active: true, status: 'ringing', roomName: signal.room_name, callId: signal.id, isIncoming: true, callerProfile: caller, token: '' })
         startCallRinging()
       })
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'call_signals',
       }, async (payload) => {
         const signal = payload.new as any
-        if (signal.status === 'declined' || signal.status === 'ended') {
+        if (signal.status === 'declined') {
           stopCallRinging(); stopDialing()
-          setCallState(defaultState)
+          setGlobalCall({ ...defaultState })
         }
-        if (signal.status === 'accepted') {
-          stopDialing(); playCallConnected()
-          const res = await fetch('/api/livekit-token', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ roomName: signal.room_name, identity: profile.id }),
-          })
-          if (res.ok) {
-            const { token } = await res.json()
-            setCallState(prev => ({ ...prev, status: 'connected', token }))
+        if (signal.status === 'ended') {
+          stopCallRinging(); stopDialing()
+          // Don't immediately end — start 3 min grace period if connected
+          if (globalCallState.status === 'connected') {
+            setGlobalCall({ status: 'ended' })
+            reconnectTimer.current = setTimeout(() => {
+              setGlobalCall({ ...defaultState })
+            }, 3 * 60 * 1000) // 3 minutes
+          } else {
+            setGlobalCall({ ...defaultState })
           }
+        }
+        if (signal.status === 'accepted' && !globalCallState.isIncoming) {
+          stopDialing(); playCallConnected()
+          const token = await getLiveKitToken(signal.room_name, profile.id)
+          if (token) setGlobalCall({ status: 'connected', token })
         }
       })
       .subscribe()
@@ -68,39 +92,49 @@ export function useVoiceCall(targetUserId: string) {
 
   const startCall = useCallback(async () => {
     if (!profile || !targetUserId) return
+    // End any existing voice channel
+    if (globalCallState.active) return
     const roomName = [profile.id, targetUserId].sort().join('-')
     const { data: signal } = await supabase.from('call_signals')
       .insert({ caller_id: profile.id, receiver_id: targetUserId, room_name: roomName, status: 'ringing' })
       .select().single()
     if (!signal) return
-    setCallState({ ...defaultState, active: true, status: 'calling', roomName, callId: signal.id, isIncoming: false, callerProfile: null })
+    setGlobalCall({ active: true, status: 'calling', roomName, callId: signal.id, isIncoming: false, callerProfile: null, token: '' })
     startDialing()
   }, [profile, targetUserId])
 
   const acceptCall = useCallback(async () => {
-    if (!callState.callId || !profile) return
+    const state = globalCallState
+    if (!state.callId || !profile) return
     stopCallRinging(); playCallConnected()
-    const token = await getLiveKitToken(callState.roomName, profile.id)
+    clearTimeout(reconnectTimer.current)
+    const token = await getLiveKitToken(state.roomName, profile.id)
     if (!token) return
-    await supabase.from('call_signals').update({ status: 'accepted' }).eq('id', callState.callId)
-    setCallState(prev => ({ ...prev, status: 'connected', token }))
-  }, [callState.callId, callState.roomName, profile])
+    await supabase.from('call_signals').update({ status: 'accepted' }).eq('id', state.callId)
+    setGlobalCall({ status: 'connected', token })
+  }, [profile])
 
   const declineCall = useCallback(async () => {
-    if (!callState.callId) return
+    const state = globalCallState
+    if (!state.callId) return
     stopCallRinging()
-    await supabase.from('call_signals').update({ status: 'declined' }).eq('id', callState.callId)
-    setCallState(defaultState)
-  }, [callState.callId])
+    await supabase.from('call_signals').update({ status: 'declined' }).eq('id', state.callId)
+    setGlobalCall({ ...defaultState })
+  }, [])
 
   const endCall = useCallback(async () => {
+    const state = globalCallState
     stopCallRinging(); stopDialing()
-    if (callState.callId) await supabase.from('call_signals').update({ status: 'ended' }).eq('id', callState.callId)
-    setCallState(defaultState)
-  }, [callState.callId])
+    clearTimeout(reconnectTimer.current)
+    if (state.callId) await supabase.from('call_signals').update({ status: 'ended' }).eq('id', state.callId)
+    setGlobalCall({ ...defaultState })
+  }, [])
 
-  const toggleMute = useCallback(() => setCallState(p => ({ ...p, muted: !p.muted })), [])
-  const toggleDeafen = useCallback(() => setCallState(p => ({ ...p, deafened: !p.deafened })), [])
+  const toggleMute = useCallback(() => setGlobalCall({ muted: !globalCallState.muted }), [])
+  const toggleDeafen = useCallback(() => setGlobalCall({ deafened: !globalCallState.deafened }), [])
 
   return { callState, startCall, acceptCall, declineCall, endCall, toggleMute, toggleDeafen }
 }
+
+// Export for use in AppShell
+export { globalCallState, setGlobalCall, defaultState }

@@ -14,7 +14,6 @@ import { playMessageSound } from '@/lib/notificationSound'
 import { format, formatDistanceToNow } from 'date-fns'
 import { tr } from 'date-fns/locale'
 import EmojiPickerBtn from './EmojiPickerBtn'
-import VoiceCallOverlay from './VoiceCallOverlay'
 import type { DirectMessage } from '@/types/database'
 
 const QUICK_REACTIONS = ['❤️', '😂', '👍', '😮', '😢', '🔥']
@@ -36,7 +35,7 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
   const other = activeConversation?.other_user
 
   useMessages(convId)
-  const { callState, startCall, acceptCall, declineCall, endCall, toggleMute, toggleDeafen } = useVoiceCall(other?.id ?? '')
+  const { startCall } = useVoiceCall(other?.id ?? '')
   const { isOtherTyping, sendTyping, stopTyping } = useTyping(convId, other?.id ?? '')
   const { reactions, toggleReaction, fetchReactions } = useReactions(convId)
 
@@ -232,16 +231,6 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
           </div>
         </div>
       </div>
-
-      {callState.active && (
-        <VoiceCallOverlay
-          roomName={callState.roomName} token={callState.token} status={callState.status}
-          currentUser={profile} otherUser={other} isIncoming={callState.isIncoming}
-          callerProfile={callState.callerProfile} onEnd={endCall} onAccept={acceptCall}
-          onDecline={declineCall} muted={callState.muted || (globalMicMuted ?? false)}
-          deafened={callState.deafened} onToggleMute={toggleMute} onToggleDeafen={toggleDeafen}
-        />
-      )}
     </div>
   )
 }
