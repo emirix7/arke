@@ -7,7 +7,7 @@ import { useServerStore } from '@/store/server'
 import ProfileCard from '@/components/ui/ProfileCard'
 import type { Channel } from '@/types/server'
 
-export default function ChannelSidebar() {
+export default function ChannelSidebar({ onChannelSelect }: { onChannelSelect?: (ch: any) => void }) {
   const { profile } = useAuthStore()
   const { activeServer, channels, setChannels, activeChannel, setActiveChannel, members, setMembers, voiceMembers, setVoiceMembers } = useServerStore()
   const [showInvite, setShowInvite] = useState(false)
@@ -88,14 +88,22 @@ export default function ChannelSidebar() {
           {activeServer?.icon_url && <img src={activeServer.icon_url} alt="" className="w-6 h-6 rounded-lg object-cover flex-shrink-0" />}
           <p className="font-syne font-bold text-sm truncate" style={{ color: '#f0eeff' }}>{activeServer?.name}</p>
         </div>
-        <div className="flex gap-1 flex-shrink-0">
-          <button onClick={() => setShowInvite(true)} title="Davet"
-            className="w-6 h-6 rounded-md flex items-center justify-center text-xs"
-            style={{ color: 'rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.05)' }}><Link size={14} strokeWidth={2} /></button>
+        <div className="flex gap-1.5 flex-shrink-0">
+          <button onClick={() => setShowInvite(true)} title="Davet Linki"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+            style={{ color: '#c044ff', background: 'rgba(192,68,255,0.12)', border: '1px solid rgba(192,68,255,0.25)' }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(192,68,255,0.2)'}
+            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(192,68,255,0.12)'}>
+            <Link size={13} strokeWidth={2} /> Davet
+          </button>
           {isAdmin && (
             <button onClick={() => setShowSettings(true)} title="Sunucu Ayarları"
-              className="w-6 h-6 rounded-md flex items-center justify-center text-xs"
-              style={{ color: 'rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.05)' }}><Settings size={14} strokeWidth={2} /></button>
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-all"
+              style={{ color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.12)'}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'}>
+              <Settings size={14} strokeWidth={1.75} />
+            </button>
           )}
         </div>
       </div>
@@ -108,7 +116,7 @@ export default function ChannelSidebar() {
             {isMod && <button onClick={() => setShowAddChannel('text')} className="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>+</button>}
           </div>
           {textChannels.map(ch => (
-            <ChannelItem key={ch.id} channel={ch} active={activeChannel?.id === ch.id} onClick={() => setActiveChannel(ch)} prefix="#" />
+            <ChannelItem key={ch.id} channel={ch} active={activeChannel?.id === ch.id} onClick={() => { setActiveChannel(ch); onChannelSelect?.(ch) }} prefix="#" />
           ))}
         </div>
 
@@ -120,7 +128,7 @@ export default function ChannelSidebar() {
           </div>
           {voiceChannels.map(ch => (
             <VoiceChannelItem key={ch.id} channel={ch} active={activeChannel?.id === ch.id}
-              onClick={() => setActiveChannel(ch)} voiceUsers={(voiceMembers as any)[ch.id] ?? []} />
+              onClick={() => { setActiveChannel(ch); onChannelSelect?.(ch) }} voiceUsers={(voiceMembers as any)[ch.id] ?? []} />
           ))}
         </div>
 

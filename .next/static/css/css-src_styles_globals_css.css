@@ -593,6 +593,9 @@ video {
 .ml-6{
   margin-left: 1.5rem;
 }
+.ml-auto{
+  margin-left: auto;
+}
 .mt-0\.5{
   margin-top: 0.125rem;
 }
@@ -625,9 +628,6 @@ video {
 }
 .table{
   display: table;
-}
-.grid{
-  display: grid;
 }
 .hidden{
   display: none;
@@ -808,6 +808,14 @@ video {
 .animate-ping{
   animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
+@keyframes pulse{
+  50%{
+    opacity: .5;
+  }
+}
+.animate-pulse{
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
 @keyframes spin{
   to{
     transform: rotate(360deg);
@@ -910,9 +918,6 @@ video {
 }
 .rounded-lg{
   border-radius: 0.5rem;
-}
-.rounded-md{
-  border-radius: 0.375rem;
 }
 .rounded-xl{
   border-radius: 0.75rem;
