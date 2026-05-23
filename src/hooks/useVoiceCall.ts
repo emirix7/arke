@@ -1,5 +1,6 @@
 'use client'
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { getLiveKitToken } from '@/lib/livekit'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
 import { startCallRinging, stopCallRinging, startDialing, stopDialing, playCallConnected } from '@/lib/notificationSound'
@@ -79,12 +80,8 @@ export function useVoiceCall(targetUserId: string) {
   const acceptCall = useCallback(async () => {
     if (!callState.callId || !profile) return
     stopCallRinging(); playCallConnected()
-    const res = await fetch('/api/livekit-token', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomName: callState.roomName, identity: profile.id }),
-    })
-    if (!res.ok) return
-    const { token } = await res.json()
+    const token = await getLiveKitToken(callState.roomName, profile.id)
+    if (!token) return
     await supabase.from('call_signals').update({ status: 'accepted' }).eq('id', callState.callId)
     setCallState(prev => ({ ...prev, status: 'connected', token }))
   }, [callState.callId, callState.roomName, profile])

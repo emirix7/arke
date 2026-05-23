@@ -7,6 +7,7 @@ import {
 import { Mic, MicOff, Volume2, VolumeX, MonitorUp, PhoneOff } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import { useServerStore } from '@/store/server'
+import { getLiveKitToken } from '@/lib/livekit'
 import { supabase } from '@/lib/supabase'
 import type { Channel } from '@/types/server'
 
@@ -105,12 +106,8 @@ export default function VoiceChannel({ channel, onLeave, globalMicMuted }: Voice
     })
 
     const connect = async () => {
-      const res = await fetch('/api/livekit-token', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName: `server-voice-${channel.id}`, identity: profile.id }),
-      })
-      if (!res.ok) return
-      const { token } = await res.json()
+      const token = await getLiveKitToken(`server-voice-${channel.id}`, profile.id)
+      if (!token) return
       try { await room.connect(process.env.NEXT_PUBLIC_LIVEKIT_URL!, token, { autoSubscribe: true } as RoomConnectOptions) } catch (e) { console.error('Connect error:', e) }
     }
     connect()
