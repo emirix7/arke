@@ -504,6 +504,12 @@ video {
 .bottom-14{
   bottom: 3.5rem;
 }
+.bottom-16{
+  bottom: 4rem;
+}
+.bottom-20{
+  bottom: 5rem;
+}
 .bottom-4{
   bottom: 1rem;
 }
@@ -768,6 +774,9 @@ video {
 .max-h-40{
   max-height: 10rem;
 }
+.max-h-full{
+  max-height: 100%;
+}
 .min-h-screen{
   min-height: 100vh;
 }
@@ -833,6 +842,9 @@ video {
 }
 .max-w-2xl{
   max-width: 42rem;
+}
+.max-w-full{
+  max-width: 100%;
 }
 .max-w-lg{
   max-width: 32rem;

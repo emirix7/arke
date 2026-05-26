@@ -40,6 +40,7 @@ export default function VoiceChannel({ channel, onLeave, globalMicMuted }: Voice
   const [screenShares, setScreenShares] = useState<ScreenShare[]>([])
   const [duration, setDuration] = useState(0)
   const [showQualityPicker, setShowQualityPicker] = useState(false)
+  const [fullscreenShare, setFullscreenShare] = useState<string | null>(null)
   const pttActive = useRef(false)
 
   const updateParticipants = useCallback(async () => {
@@ -307,11 +308,16 @@ export default function VoiceChannel({ channel, onLeave, globalMicMuted }: Voice
         {allScreenShares.length > 0 && (
           <div className="flex flex-col gap-2">
             {allScreenShares.map(ss => (
-              <div key={ss.participantId} className="rounded-2xl overflow-hidden"
-                style={{ background: '#000', border: '1px solid rgba(192,68,255,0.3)', position: 'relative' }}>
+              <div key={ss.participantId} className="rounded-2xl overflow-hidden group cursor-pointer"
+                style={{ background: '#000', border: '1px solid rgba(192,68,255,0.3)', position: 'relative' }}
+                onClick={() => setFullscreenShare(ss.participantId)}>
                 <div className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-lg text-xs"
                   style={{ background: 'rgba(0,0,0,0.6)', color: 'white' }}>
                   {ss.username} paylaşıyor
+                </div>
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                  style={{ background: 'rgba(0,0,0,0.3)' }}>
+                  <span className="text-white text-xs font-semibold px-2 py-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.6)' }}>🔍 Büyüt</span>
                 </div>
                 {ss.participantId === 'local' ? (
                   <video ref={localScreenRef} autoPlay muted playsInline
@@ -402,6 +408,48 @@ export default function VoiceChannel({ channel, onLeave, globalMicMuted }: Voice
           <PhoneOff size={18} strokeWidth={2} />
         </button>
       </div>
+    {/* Fullscreen modal */}
+      {fullscreenShare && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.92)' }}
+          onClick={() => setFullscreenShare(null)}>
+          <div className="relative w-full h-full flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
+            {fullscreenShare === 'local' ? (
+              <video ref={el => { if (el && localScreenRef.current?.srcObject) el.srcObject = localScreenRef.current.srcObject }}
+                autoPlay muted playsInline className="max-w-full max-h-full rounded-xl" style={{ objectFit: 'contain' }} />
+            ) : (
+              <video ref={el => {
+                if (el) {
+                  const src = screenVideoRefs.current.get(fullscreenShare)
+                  if (src?.srcObject) el.srcObject = src.srcObject
+                }
+              }} autoPlay playsInline className="max-w-full max-h-full rounded-xl" style={{ objectFit: 'contain' }} />
+            )}
+            <div className="absolute top-4 right-4 flex gap-2">
+              <button
+                onClick={() => {
+                  const src = fullscreenShare === 'local' ? localScreenRef.current : screenVideoRefs.current.get(fullscreenShare)
+                  if (!src?.srcObject) return
+                  const win = window.open('', '_blank', 'width=1280,height=720')
+                  if (!win) return
+                  win.document.write('<html><body style="margin:0;background:#000"><video autoplay style="width:100%;height:100vh;object-fit:contain"></video></body></html>')
+                  win.document.close()
+                  const v = win.document.querySelector('video') as HTMLVideoElement
+                  if (v) v.srcObject = (src.srcObject as MediaStream)
+                }}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+                style={{ background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)' }}>
+                ↗ Yeni Pencere
+              </button>
+              <button onClick={() => setFullscreenShare(null)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+                style={{ background: 'rgba(255,107,157,0.2)', color: '#ff6b9d', border: '1px solid rgba(255,107,157,0.3)' }}>
+                ✕ Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

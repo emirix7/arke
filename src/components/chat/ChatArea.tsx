@@ -353,6 +353,7 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
             onAccept={acceptCall}
             onDecline={declineCall}
             onRejoin={rejoinCall}
+            globalMicMuted={globalMicMuted}
           />
         </div>
       )}

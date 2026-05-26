@@ -18,11 +18,12 @@ interface Props {
   onAccept?: () => void
   onDecline?: () => void
   onRejoin?: () => void
+  globalMicMuted?: boolean
 }
 
 export default function VoiceCallOverlay({
   roomName, token, status, currentUser, otherUser,
-  isIncoming, callerProfile, onEnd, onLeave, onAccept, onDecline, onRejoin,
+  isIncoming, callerProfile, onEnd, onLeave, onAccept, onDecline, onRejoin, globalMicMuted,
 }: Props) {
   const [duration, setDuration] = useState(0)
   const [connected, setConnected] = useState(false)
@@ -34,6 +35,10 @@ export default function VoiceCallOverlay({
   const [remoteSharing, setRemoteSharing] = useState(false)
   const [graceCountdown, setGraceCountdown] = useState(180)
   const [otherAway, setOtherAway] = useState(false)
+  const [fullscreenShare, setFullscreenShare] = useState<'local' | 'remote' | null>(null)
+  const [showQualityPicker, setShowQualityPicker] = useState(false)
+  const [pushToTalk, setPushToTalk] = useState(false)
+  const pttActive = useRef(false)
   const roomRef = useRef<Room | null>(null)
 
   const isRinging = status === 'ringing'
@@ -136,22 +141,33 @@ export default function VoiceCallOverlay({
     return () => { supabase.removeChannel(ch) }
   }, [roomName, isAway, otherAway])
 
-  // Mute
-  useEffect(() => {
-    if (!roomRef.current || !connected) return
-    ;(async () => {
-      try { await roomRef.current!.localParticipant.setMicrophoneEnabled(!muted) } catch {
-        roomRef.current?.localParticipant.audioTrackPublications.forEach(pub => {
-          if (pub.track) muted ? pub.track.mute() : pub.track.unmute()
-        })
-      }
-    })()
-  }, [muted, connected])
+  // Mute applied directly on button click
 
   // Deafen
   useEffect(() => {
     audioRefs.current.forEach(el => { el.volume = deafened ? 0 : 1 })
   }, [deafened])
+
+  // Global mic mute from sidebar button
+  useEffect(() => {
+    if (!roomRef.current || !connected) return
+    if (globalMicMuted) {
+      roomRef.current.localParticipant.audioTrackPublications.forEach(pub => {
+        if (pub.track) pub.track.mute()
+      })
+      setMuted(true)
+    } else {
+      // Only unmute if local mute button not active
+      setMuted(prev => {
+        if (!prev) {
+          roomRef.current?.localParticipant.audioTrackPublications.forEach(pub => {
+            if (pub.track) pub.track.unmute()
+          })
+        }
+        return prev
+      })
+    }
+  }, [globalMicMuted, connected])
 
   // Call duration timer
   useEffect(() => {
@@ -171,10 +187,19 @@ export default function VoiceCallOverlay({
     return () => clearInterval(t)
   }, [isAway])
 
-  const startScreenShare = async () => {
+  const startScreenShare = async (quality = '720p30') => {
     if (!roomRef.current || !connected) return
+    setShowQualityPicker(false)
+    const qualityMap: Record<string, any> = {
+      '480p30': { width: 854, height: 480, frameRate: 30 },
+      '720p30': { width: 1280, height: 720, frameRate: 30 },
+      '720p60': { width: 1280, height: 720, frameRate: 60 },
+      '1080p30': { width: 1920, height: 1080, frameRate: 30 },
+      '1080p60': { width: 1920, height: 1080, frameRate: 60 },
+    }
+    const res = qualityMap[quality]
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: res, audio: false })
       const vt = stream.getVideoTracks()[0]
       if (!vt) return
       if (localScreenRef.current) localScreenRef.current.srcObject = stream
@@ -230,17 +255,98 @@ export default function VoiceCallOverlay({
       {(sharing || remoteSharing) && (
         <div className="flex gap-2 p-3 flex-shrink-0" style={{ maxHeight: '35%' }}>
           {sharing && (
-            <div className="flex-1 rounded-xl overflow-hidden relative" style={{ background: '#000', border: '1px solid rgba(192,68,255,0.4)' }}>
+            <div className="flex-1 rounded-xl overflow-hidden relative cursor-pointer group"
+              style={{ background: '#000', border: '1px solid rgba(192,68,255,0.4)' }}
+              onClick={() => setFullscreenShare('local')}>
               <span className="absolute top-1.5 left-1.5 text-xs px-1.5 py-0.5 rounded z-10" style={{ background: 'rgba(0,0,0,0.7)', color: 'white' }}>Sen</span>
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                style={{ background: 'rgba(0,0,0,0.3)' }}>
+                <span className="text-white text-xs font-semibold px-2 py-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.6)' }}>🔍 Büyüt</span>
+              </div>
               <video ref={localScreenRef} autoPlay muted playsInline className="w-full h-full object-contain" />
             </div>
           )}
           {remoteSharing && (
-            <div className="flex-1 rounded-xl overflow-hidden relative" style={{ background: '#000', border: '1px solid rgba(61,255,154,0.4)' }}>
+            <div className="flex-1 rounded-xl overflow-hidden relative cursor-pointer group"
+              style={{ background: '#000', border: '1px solid rgba(61,255,154,0.4)' }}
+              onClick={() => setFullscreenShare('remote')}>
               <span className="absolute top-1.5 left-1.5 text-xs px-1.5 py-0.5 rounded z-10" style={{ background: 'rgba(0,0,0,0.7)', color: 'white' }}>{otherName}</span>
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                style={{ background: 'rgba(0,0,0,0.3)' }}>
+                <span className="text-white text-xs font-semibold px-2 py-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.6)' }}>🔍 Büyüt</span>
+              </div>
               <video ref={remoteScreenRef} autoPlay playsInline className="w-full h-full object-contain" />
             </div>
           )}
+        </div>
+      )}
+
+      {/* Quality picker */}
+      {showQualityPicker && (
+        <div className="absolute bottom-20 left-1/2 z-50 rounded-xl overflow-hidden"
+          style={{ transform: 'translateX(-50%)', background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', minWidth: 180 }}>
+          <p className="px-3 py-2 text-xs font-semibold" style={{ color: 'rgba(255,255,255,0.4)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>Kalite Seç</p>
+          {[['480p30','480p 30fps'],['720p30','720p 30fps'],['720p60','720p 60fps'],['1080p30','1080p 30fps'],['1080p60','1080p 60fps']].map(([val, label]) => (
+            <button key={val} onClick={() => startScreenShare(val)}
+              className="w-full flex items-center px-3 py-2 text-sm text-left transition-all"
+              style={{ color: 'rgba(255,255,255,0.7)' }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+              {label}
+            </button>
+          ))}
+          <button onClick={() => setShowQualityPicker(false)}
+            className="w-full flex items-center px-3 py-2 text-sm"
+            style={{ color: '#ff6b9d', borderTop: '1px solid rgba(255,255,255,0.07)' }}>İptal</button>
+        </div>
+      )}
+
+      {pushToTalk && (
+        <div className="absolute bottom-16 left-1/2 text-xs px-3 py-1.5 rounded-xl"
+          style={{ transform: 'translateX(-50%)', background: 'rgba(192,68,255,0.1)', border: '1px solid rgba(192,68,255,0.2)', color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>
+          Bas-Konuş — <strong style={{ color: '#c044ff' }}>{(localStorage.getItem('arke_ptt_key') || 'V').toUpperCase()}</strong>
+        </div>
+      )}
+
+      {/* Fullscreen modal */}
+      {fullscreenShare && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.92)' }}
+          onClick={() => setFullscreenShare(null)}>
+          <div className="relative w-full h-full flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
+            <video
+              ref={el => {
+                if (!el) return
+                const src = fullscreenShare === 'local' ? localScreenRef.current : remoteScreenRef.current
+                if (src?.srcObject) el.srcObject = src.srcObject
+              }}
+              autoPlay muted={fullscreenShare === 'local'} playsInline
+              className="max-w-full max-h-full rounded-xl"
+              style={{ objectFit: 'contain' }}
+            />
+            <div className="absolute top-4 right-4 flex gap-2">
+              <button
+                onClick={() => {
+                  const src = fullscreenShare === 'local' ? localScreenRef.current : remoteScreenRef.current
+                  if (!src?.srcObject) return
+                  const win = window.open('', '_blank', 'width=1280,height=720')
+                  if (!win) return
+                  win.document.write('<html><body style="margin:0;background:#000"><video autoplay style="width:100%;height:100vh;object-fit:contain"></video></body></html>')
+                  win.document.close()
+                  const v = win.document.querySelector('video') as HTMLVideoElement
+                  if (v) v.srcObject = (src.srcObject as MediaStream)
+                }}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+                style={{ background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)' }}>
+                ↗ Yeni Pencere
+              </button>
+              <button onClick={() => setFullscreenShare(null)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+                style={{ background: 'rgba(255,107,157,0.2)', color: '#ff6b9d', border: '1px solid rgba(255,107,157,0.3)' }}>
+                ✕ Kapat
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -342,7 +448,18 @@ export default function VoiceCallOverlay({
           </>
         ) : (
           <>
-            <Btn onClick={() => setMuted(p => !p)}
+            <Btn onClick={() => {
+                const newMuted = !muted
+                setMuted(newMuted)
+                if (roomRef.current) {
+                  roomRef.current.localParticipant.audioTrackPublications.forEach(pub => {
+                    if (pub.track) {
+                      if (newMuted) pub.track.mute()
+                      else pub.track.unmute()
+                    }
+                  })
+                }
+              }}
               icon={muted ? <MicOff size={18} strokeWidth={2} /> : <Mic size={18} strokeWidth={2} />}
               color={muted ? '#ff6b9d' : 'rgba(255,255,255,0.7)'}
               bg={muted ? 'rgba(255,107,157,0.15)' : 'rgba(255,255,255,0.08)'}
@@ -354,12 +471,18 @@ export default function VoiceCallOverlay({
               bg={deafened ? 'rgba(255,107,157,0.15)' : 'rgba(255,255,255,0.08)'}
               border={deafened ? 'rgba(255,107,157,0.4)' : 'rgba(255,255,255,0.15)'}
               label={deafened ? 'Sesi Aç' : 'Sesi Kapat'} />
-            <Btn onClick={sharing ? stopScreenShare : startScreenShare}
+            <Btn onClick={sharing ? stopScreenShare : () => setShowQualityPicker(p => !p)}
               icon={sharing ? <MonitorOff size={18} strokeWidth={2} /> : <MonitorUp size={18} strokeWidth={2} />}
-              color={sharing ? '#c044ff' : 'rgba(255,255,255,0.7)'}
-              bg={sharing ? 'rgba(192,68,255,0.15)' : 'rgba(255,255,255,0.08)'}
-              border={sharing ? 'rgba(192,68,255,0.4)' : 'rgba(255,255,255,0.15)'}
+              color={sharing ? '#c044ff' : showQualityPicker ? '#c044ff' : 'rgba(255,255,255,0.7)'}
+              bg={sharing ? 'rgba(192,68,255,0.15)' : showQualityPicker ? 'rgba(192,68,255,0.12)' : 'rgba(255,255,255,0.08)'}
+              border={sharing ? 'rgba(192,68,255,0.4)' : showQualityPicker ? 'rgba(192,68,255,0.3)' : 'rgba(255,255,255,0.15)'}
               label={sharing ? 'Paylaşımı Durdur' : 'Ekran Paylaş'} />
+            <Btn onClick={() => setPushToTalk(p => !p)}
+              icon={<Mic size={18} strokeWidth={2} />}
+              color={pushToTalk ? '#c044ff' : 'rgba(255,255,255,0.7)'}
+              bg={pushToTalk ? 'rgba(192,68,255,0.15)' : 'rgba(255,255,255,0.08)'}
+              border={pushToTalk ? 'rgba(192,68,255,0.4)' : 'rgba(255,255,255,0.15)'}
+              label="Bas-Konuş" />
             <Btn onClick={onLeave ?? onEnd}
               icon={<PhoneOff size={18} strokeWidth={2} />}
               color="#ff6b9d" bg="rgba(255,107,157,0.2)" border="rgba(255,107,157,0.5)"
