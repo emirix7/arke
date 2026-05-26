@@ -147,13 +147,24 @@ export default function VoiceChannel({ channel, onLeave, globalMicMuted }: Voice
     connect()
 
     const joinSession = async () => {
+      // Remove own old sessions + stale sessions older than 10 min
       await supabase.from('voice_sessions').delete().eq('user_id', profile.id)
+      await supabase.from('voice_sessions').delete()
+        .lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
       await new Promise(r => setTimeout(r, 100))
       await supabase.from('voice_sessions').insert({ channel_id: channel.id, user_id: profile.id })
     }
     joinSession()
 
+    // Cleanup on page close/refresh
+    const handleUnload = () => {
+      supabase.from('voice_sessions').delete().eq('user_id', profile.id)
+      room.disconnect()
+    }
+    window.addEventListener('beforeunload', handleUnload)
+
     return () => {
+      window.removeEventListener('beforeunload', handleUnload)
       room.disconnect()
       audioElements.current.forEach(el => el.remove())
       audioElements.current.clear()

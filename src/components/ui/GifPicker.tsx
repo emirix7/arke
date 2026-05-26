@@ -26,9 +26,10 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
   const fetchGifs = async (searchQuery: string) => {
     setLoading(true)
     try {
+      const apiKey = process.env.NEXT_PUBLIC_TENOR_API_KEY || 'AIzaSyBFMAFGUFzS8gZHrqpzAEklxfkXXkpRDm4'
       const endpoint = searchQuery === 'trending'
-        ? `https://tenor.googleapis.com/v2/featured?key=AIzaSyBFMAFGUFzS8gZHrqpzAEklxfkXXkpRDm4&limit=20&media_filter=gif`
-        : `https://tenor.googleapis.com/v2/search?q=${encodeURIComponent(searchQuery)}&key=AIzaSyBFMAFGUFzS8gZHrqpzAEklxfkXXkpRDm4&limit=20&media_filter=gif`
+        ? `https://tenor.googleapis.com/v2/search?q=trending&key=${apiKey}&limit=20&media_filter=gif&client_key=arke`
+        : `https://tenor.googleapis.com/v2/search?q=${encodeURIComponent(searchQuery)}&key=${apiKey}&limit=20&media_filter=gif&client_key=arke`
       const res = await fetch(endpoint)
       const data = await res.json()
       const urls = (data.results || []).map((r: any) => r.media_formats?.gif?.url || r.media_formats?.tinygif?.url).filter(Boolean)

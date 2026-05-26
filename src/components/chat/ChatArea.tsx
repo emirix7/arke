@@ -35,6 +35,8 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
   const [replyTo, setReplyTo] = useState<{ id: string; content: string; username: string } | null>(null)
   const [voiceError, setVoiceError] = useState('')
   const [showScrollBtn, setShowScrollBtn] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
   const [isBlocked, setIsBlocked] = useState(false)
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -180,7 +182,34 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
     if (e.target.value) sendTyping(); else stopTyping()
   }
 
-  const grouped = groupMessages(convMessages.filter(m => {
+  const loadMoreMessages = async () => {
+    if (!convId || loadingMore || !hasMore) return
+    setLoadingMore(true)
+    const oldest = convMessages[0]
+    if (!oldest) { setLoadingMore(false); return }
+    const { data } = await supabase
+      .from('direct_messages')
+      .select('*')
+      .eq('conversation_id', convId)
+      .is('deleted_at', null)
+      .lt('created_at', oldest.created_at)
+      .order('created_at', { ascending: false })
+      .limit(50)
+    if (data && data.length > 0) {
+      useChatStore.setState(state => ({
+        messages: {
+          ...state.messages,
+          [convId]: [...data.reverse(), ...(state.messages[convId] || [])]
+        }
+      }))
+      if (data.length < 50) setHasMore(false)
+    } else {
+      setHasMore(false)
+    }
+    setLoadingMore(false)
+  }
+
+    const grouped = groupMessages(convMessages.filter(m => {
     if ((m as any).deleted_at) return false
     // Filter messages from blocked user
     if (isBlocked && m.sender_id !== profile?.id) return false
@@ -222,7 +251,17 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
           const el = e.currentTarget
           const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
           setShowScrollBtn(distFromBottom > 200)
+          if (el.scrollTop < 100) loadMoreMessages()
         }}>
+        {hasMore && (
+          <div className="flex justify-center py-2">
+            <button onClick={loadMoreMessages} disabled={loadingMore}
+              className="text-xs px-3 py-1.5 rounded-xl transition-all"
+              style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {loadingMore ? 'Yükleniyor...' : '↑ Daha eski mesajlar'}
+            </button>
+          </div>
+        )}
         {grouped.map((group, gi) => (
           <MessageGroup key={gi} group={group} currentUserId={profile?.id ?? ''}
             reactions={reactions} onReact={toggleReaction}

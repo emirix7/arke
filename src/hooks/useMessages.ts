@@ -10,15 +10,16 @@ export function useMessages(conversationId: string) {
   useEffect(() => {
     if (!conversationId) return
 
-    // Fetch existing messages
+    // Fetch last 50 messages initially
     supabase
       .from('direct_messages')
       .select('*')
       .eq('conversation_id', conversationId)
       .is('deleted_at', null)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
+      .limit(50)
       .then(({ data }) => {
-        if (data) setMessages(conversationId, data)
+        if (data) setMessages(conversationId, data.reverse())
       })
 
     // Track blocked users for this conversation

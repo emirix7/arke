@@ -47,6 +47,13 @@ export function useVoiceCall(targetUserId: string) {
   // Listen for signals targeted at me
   useEffect(() => {
     if (!profile) return
+    // Cleanup stale signals on mount
+    supabase.from('call_signals')
+      .update({ status: 'ended' })
+      .or(`caller_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
+      .in('status', ['ringing', 'away'])
+      .lt('created_at', new Date(Date.now() - 2 * 60 * 1000).toISOString())
+      .then(() => {})
     const ch = supabase
       .channel(`calls:${profile.id}:${Date.now()}`)
       .on('postgres_changes', {
@@ -105,6 +112,11 @@ export function useVoiceCall(targetUserId: string) {
 
   const startCall = useCallback(async () => {
     if (!profile || !targetUserId || globalCallState.active) return
+    // Clean up any stale signals
+    await supabase.from('call_signals')
+      .update({ status: 'ended' })
+      .eq('caller_id', profile.id)
+      .in('status', ['ringing', 'away'])
     const roomName = [profile.id, targetUserId].sort().join('-')
     const { data: signal } = await supabase.from('call_signals')
       .insert({ caller_id: profile.id, receiver_id: targetUserId, room_name: roomName, status: 'ringing' })
