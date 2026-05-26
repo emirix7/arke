@@ -14,6 +14,7 @@ import { playMessageSound } from '@/lib/notificationSound'
 import { format, formatDistanceToNow } from 'date-fns'
 import { tr } from 'date-fns/locale'
 import EmojiPickerBtn from './EmojiPickerBtn'
+import GifPicker from '@/components/ui/GifPicker'
 import type { DirectMessage } from '@/types/database'
 
 const QUICK_REACTIONS = ['❤️', '😂', '👍', '😮', '😢', '🔥']
@@ -28,6 +29,7 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState('')
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false)
+  const [showGifPicker, setShowGifPicker] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const prevLengthRef = useRef(0)
@@ -84,6 +86,14 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
     }
     await (supabase.from('direct_messages') as any).insert({ conversation_id: convId, sender_id: profile.id, content: content || null, image_url })
     setSending(false)
+  }
+
+  const sendGif = async (url: string) => {
+    if (!profile || !activeConversation) return
+    await (supabase.from('direct_messages') as any).insert({
+      conversation_id: convId, sender_id: profile.id,
+      content: null, image_url: url
+    })
   }
 
   const sendVoiceMessage = async (blob: Blob, duration: number) => {
@@ -211,6 +221,14 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
             placeholder={`${other?.username ?? ''} kişisine mesaj yaz...`}
             value={input} onChange={handleInput} onKeyDown={handleKey} onBlur={() => stopTyping()} />
           <div className="flex items-center gap-1 flex-shrink-0">
+            <div className="relative">
+              <button onClick={() => setShowGifPicker(p => !p)}
+                className="flex items-center justify-center px-2 py-1 rounded-lg text-xs font-bold transition-all"
+                style={{ color: showGifPicker ? '#c044ff' : 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                GIF
+              </button>
+              {showGifPicker && <GifPicker onSelect={sendGif} onClose={() => setShowGifPicker(false)} />}
+            </div>
             <EmojiPickerBtn onEmoji={emoji => setInput(p => p + emoji)} />
             {!input.trim() && !imageFile && (
               <button onClick={() => setShowVoiceRecorder(true)}

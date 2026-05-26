@@ -6,6 +6,7 @@ import { useAuthStore } from '@/store/auth'
 import { useChatStore } from '@/store/chat'
 import { useConversations } from '@/hooks/useConversations'
 import ProfileCard from '@/components/ui/ProfileCard'
+import StoriesBar from '@/components/ui/StoriesBar'
 import type { ConversationWithProfile } from '@/types/database'
 
 export default function FriendsPanel() {
@@ -54,6 +55,7 @@ export default function FriendsPanel() {
         </div>
       </div>
 
+      <StoriesBar />
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {online.length > 0 && (
           <>

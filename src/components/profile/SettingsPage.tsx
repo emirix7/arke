@@ -20,6 +20,8 @@ export default function SettingsPage() {
   const [pwError, setPwError] = useState('')
   const [pwSuccess, setPwSuccess] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [activity, setActivity] = useState((profile as any)?.activity ?? '')
+  const [activityEmoji, setActivityEmoji] = useState((profile as any)?.activity_emoji ?? '🎮')
   const [pttKey, setPttKey] = useState(typeof window !== 'undefined' ? localStorage.getItem('arke_ptt_key') || 'v' : 'v')
   const [recordingPtt, setRecordingPtt] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -82,7 +84,7 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    await updateProfile({ bio, display_name: displayName, custom_status: customStatus, allow_messages_from: msgPerm })
+    await updateProfile({ bio, display_name: displayName, custom_status: customStatus, allow_messages_from: msgPerm, activity: activity || null, activity_emoji: activityEmoji } as any)
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000)
   }
 
@@ -239,6 +241,18 @@ export default function SettingsPage() {
             <Field label="Özel Durum">
               <input value={customStatus} onChange={e => setCustomStatus(e.target.value)} placeholder="ne yapıyorsun?" maxLength={64} className="arke-input" />
             </Field>
+            <Field label="Aktivite Durumu">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <select value={activityEmoji} onChange={e => setActivityEmoji(e.target.value)}
+                  style={{ padding: '10px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#e8e6f0', fontSize: 18, cursor: 'pointer', outline: 'none' }}>
+                  {['🎮','🎵','📺','📚','💻','🏃','🎨','🍕','😴','✈️'].map(e => <option key={e} value={e}>{e}</option>)}
+                </select>
+                <input value={activity} onChange={e => setActivity(e.target.value)}
+                  placeholder="ne yapıyorsun? (Valorant oynuyor...)" maxLength={64}
+                  className="arke-input" style={{ flex: 1 }} />
+              </div>
+            </Field>
+
             <Field label="Biyografi">
               <textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Kendinden bahset..." maxLength={190} rows={3} className="arke-input" style={{ resize: 'none' }} />
             </Field>

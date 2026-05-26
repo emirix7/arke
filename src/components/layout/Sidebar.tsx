@@ -4,7 +4,8 @@ import { useAuthStore } from '@/store/auth'
 import { supabase } from '@/lib/supabase'
 import type { AppView } from './AppShell'
 import { useFriendRequests } from '@/hooks/useFriends'
-import { MessageSquare, Users, Phone, Settings, Bell, BellOff, Mic, MicOff, LogOut } from 'lucide-react'
+import { MessageSquare, Users, Settings, Bell, BellOff, Mic, MicOff, LogOut } from 'lucide-react'
+import PatchNotes from '@/components/ui/PatchNotes'
 
 interface SidebarProps {
   activeView: AppView
@@ -25,6 +26,7 @@ export default function Sidebar({ activeView, onViewChange, dnd, micMuted, onTog
   const { profile, signOut } = useAuthStore()
   const { pendingCount } = useFriendRequests()
   const [showProfileMenu, setShowProfileMenu] = useState(false)
+  const [showPatchNotes, setShowPatchNotes] = useState(false)
 
   const initials = (profile?.username ?? '?').slice(0, 2).toUpperCase()
 
@@ -38,10 +40,12 @@ export default function Sidebar({ activeView, onViewChange, dnd, micMuted, onTog
     <div className="flex flex-col items-center py-4 gap-1.5 flex-shrink-0 relative"
       style={{ width: 72, background: '#080810', borderRight: '1px solid rgba(255,255,255,0.05)' }}>
 
-      {/* Logo */}
-      <div className="mb-2 flex-shrink-0">
+      {/* Logo - clickable */}
+      <div className="mb-2 flex-shrink-0 cursor-pointer relative group" onClick={() => setShowPatchNotes(true)}>
         <img src="/arke-logo.png" alt="Arke"
           style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', display: 'block' }} />
+        <div className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+          style={{ background: 'rgba(192,68,255,0.2)', border: '2px solid rgba(192,68,255,0.4)' }} />
       </div>
 
       <div style={{ width: 32, height: 1, background: 'rgba(255,255,255,0.08)', margin: '2px 0' }} />
@@ -146,6 +150,7 @@ export default function Sidebar({ activeView, onViewChange, dnd, micMuted, onTog
           )}
         </div>
       </div>
+      {showPatchNotes && <PatchNotes onClose={() => setShowPatchNotes(false)} />}
     </div>
   )
 }

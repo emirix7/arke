@@ -1,6 +1,8 @@
 'use client'
-import { useEffect, useRef } from 'react'
-import { MessageSquare, UserMinus, Ban, Shield, Crown, User, UserX } from 'lucide-react'
+import { MessageSquare, UserMinus, Ban, Shield, Crown, User, UserX, Eye } from 'lucide-react'
+import { useEffect, useRef, useState as useStateLocal } from 'react'
+import { supabase } from '@/lib/supabase'
+import BadgeDisplay from './BadgeDisplay'
 import { formatDistanceToNow } from 'date-fns'
 import { tr } from 'date-fns/locale'
 
@@ -27,6 +29,24 @@ const ROLE_ICONS: Record<string, React.ReactNode> = {
 
 export default function ProfileCard({ profile, x, y, onClose, onMessage, onRemoveFriend, onBlock, extraActions, roleBadge }: ProfileCardProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const [badges, setBadges] = useStateLocal<string[]>([])
+  const [viewCount, setViewCount] = useStateLocal(0)
+  const { useAuthStore } = require('@/store/auth')
+  const myProfile = useAuthStore().profile
+
+  useEffect(() => {
+    // Fetch badges
+    supabase.from('badges').select('badge_type').eq('user_id', profile.id)
+      .then(({ data }) => { if (data) setBadges(data.map((b: any) => b.badge_type)) })
+    // Record view and get count
+    if (myProfile && myProfile.id !== profile.id) {
+      supabase.from('profile_views').upsert({ profile_id: profile.id, viewer_id: myProfile.id, viewed_at: new Date().toISOString() }, { onConflict: 'profile_id,viewer_id' })
+      supabase.from('profile_views').select('id', { count: 'exact', head: true }).eq('profile_id', profile.id)
+        .then(({ count }) => setViewCount(count ?? 0))
+    }
+    // Check and award badges
+    if (myProfile) supabase.rpc('check_and_award_badges', { p_user_id: myProfile.id }).then(() => {})
+  }, [profile.id])
 
   useEffect(() => {
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }
@@ -69,6 +89,11 @@ export default function ProfileCard({ profile, x, y, onClose, onMessage, onRemov
               </span>
             )}
           </div>
+          {(profile as any).activity && (
+            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
+              {(profile as any).activity_emoji ?? '🎮'} {(profile as any).activity}
+            </p>
+          )}
           <p style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor, display: 'inline-block', flexShrink: 0 }} />
             <span style={{ color: 'rgba(255,255,255,0.4)' }}>{lastSeen ? `Son görülme ${lastSeen}` : statusLabel}</span>
@@ -82,6 +107,17 @@ export default function ProfileCard({ profile, x, y, onClose, onMessage, onRemov
             <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', marginBottom: 3 }}>Hakkında</p>
             <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>{profile.bio}</p>
           </div>
+        )}
+        {badges.length > 0 && (
+          <div>
+            <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', marginBottom: 6 }}>Rozetler</p>
+            <BadgeDisplay badges={badges} size="sm" />
+          </div>
+        )}
+        {viewCount > 0 && (
+          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Eye size={11} strokeWidth={2} /> {viewCount} profil ziyareti
+          </p>
         )}
         {(onMessage || extraActions?.length || onBlock) && <div style={{ height: 1, background: 'rgba(255,255,255,0.07)' }} />}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

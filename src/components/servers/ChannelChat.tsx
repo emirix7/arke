@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
 import { useServerStore } from '@/store/server'
+import { useTyping } from '@/hooks/useTyping'
 import { playMessageSound } from '@/lib/notificationSound'
 import { notifyServerMembers } from '@/hooks/useNotifications'
 import { format } from 'date-fns'
@@ -25,7 +26,9 @@ export default function ChannelChat() {
   const inputRef = useRef<HTMLInputElement>(null)
   const prevLenRef = useRef(0)
   const channelId = activeChannel?.id ?? ''
+  const otherUserIds = members.filter((m: any) => m.user_id !== profile?.id).map((m: any) => m.user_id)
   const convMessages = messages[channelId] ?? []
+  const { isOtherTyping: isTyping, sendTyping, stopTyping } = useTyping(channelId, otherUserIds[0] ?? '')
 
   // Get current user's role
   const myMember = members.find((m: any) => m.user_id === profile?.id) as any
@@ -87,6 +90,7 @@ export default function ChannelChat() {
 
   const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value; setInput(val)
+    if (val) sendTyping(); else stopTyping()
     const atMatch = val.match(/@(\w*)$/)
     if (atMatch) { setMentionSearch(atMatch[1]); setShowMentions(true); setMentionIndex(0) }
     else setShowMentions(false)
@@ -134,7 +138,7 @@ export default function ChannelChat() {
       }
       await notifyServerMembers(activeServer.id, channelId, profile.id, newMsg.id, 'message')
     }
-    setInput(''); setShowMentions(false); setSending(false)
+    setInput(''); setShowMentions(false); setSending(false); stopTyping()
   }
 
   const handleDelete = async (msgId: string) => {
@@ -179,6 +183,20 @@ export default function ChannelChat() {
               style={{ background: '#ff6b9d', color: 'white' }}>
               <X size={10} strokeWidth={3} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Typing indicator */}
+      {isTyping && (
+        <div className="mx-5 mb-1 flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1 px-3 py-2 rounded-xl"
+            style={{ background: 'rgba(255,255,255,0.04)' }}>
+            {[0,1,2].map(i => (
+              <div key={i} className="w-1.5 h-1.5 rounded-full"
+                style={{ background: '#c044ff', animation: `pulse-dot 1s ease-in-out ${i * 0.2}s infinite` }} />
+            ))}
+            <span className="text-xs ml-1" style={{ color: 'rgba(255,255,255,0.35)' }}>birisi yazıyor...</span>
           </div>
         </div>
       )}

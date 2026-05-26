@@ -1,4 +1,5 @@
 'use client'
+import ServerStats from '@/components/ui/ServerStats'
 import { Link, Settings, Hash, Volume2, Plus, Copy, Check, Shield, Crown, User, UserX } from 'lucide-react'
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -342,6 +343,7 @@ function ServerSettingsModal({ server, onClose, onUpdate }: { server: any; onClo
         </div>
       </div>
 
+      <ServerStats serverId={server.id} />
       <button onClick={handleSave} disabled={saving}
         className="w-full py-2.5 rounded-xl text-sm font-semibold text-white"
         style={{ background: 'linear-gradient(135deg, #c044ff, #00d4ff)' }}>
