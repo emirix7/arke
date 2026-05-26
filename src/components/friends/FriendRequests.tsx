@@ -32,7 +32,14 @@ export default function FriendRequests() {
 
   const acceptRequest = async (friendshipId: string, senderId: string) => {
     await supabase.from('friendships').update({ status: 'accepted' }).eq('id', friendshipId)
-    await supabase.from('conversations').insert({ participant_1: profile!.id, participant_2: senderId })
+    // Check if conversation already exists before inserting
+    const { data: existing } = await supabase.from('conversations')
+      .select('id')
+      .or(`and(participant_1.eq.${profile!.id},participant_2.eq.${senderId}),and(participant_1.eq.${senderId},participant_2.eq.${profile!.id})`)
+      .single()
+    if (!existing) {
+      await supabase.from('conversations').insert({ participant_1: profile!.id, participant_2: senderId })
+    }
     refetch()
   }
 

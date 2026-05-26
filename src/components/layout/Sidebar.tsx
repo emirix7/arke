@@ -4,7 +4,7 @@ import { useAuthStore } from '@/store/auth'
 import { supabase } from '@/lib/supabase'
 import type { AppView } from './AppShell'
 import { useFriendRequests } from '@/hooks/useFriends'
-import { MessageSquare, Users, Settings, Bell, BellOff, Mic, MicOff, LogOut } from 'lucide-react'
+import { MessageSquare, Users, Settings, Bell, BellOff, Mic, MicOff, LogOut, EyeOff } from 'lucide-react'
 import PatchNotes from '@/components/ui/PatchNotes'
 
 interface SidebarProps {
@@ -121,7 +121,7 @@ export default function Sidebar({ activeView, onViewChange, dnd, micMuted, onTog
               : initials}
           </div>
           <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full"
-            style={{ background: dnd ? '#ff6b9d' : '#3dff9a', border: '2px solid #080810' }} />
+            style={{ background: dnd ? '#ff6b9d' : profile?.status === 'invisible' ? '#555' : '#3dff9a', border: '2px solid #080810' }} />
 
           {showProfileMenu && (
             <div className="absolute bottom-12 left-0 rounded-xl overflow-hidden z-50"
@@ -132,6 +132,19 @@ export default function Sidebar({ activeView, onViewChange, dnd, micMuted, onTog
                   {dnd ? '● Rahatsız Etme' : '● Çevrimiçi'}
                 </p>
               </div>
+              <button onClick={async () => {
+                  const newStatus = profile?.status === 'invisible' ? 'online' : 'invisible'
+                  await supabase.from('profiles').update({ status: newStatus }).eq('id', profile!.id)
+                  useAuthStore.getState().fetchProfile(profile!.id)
+                  setShowProfileMenu(false)
+                }}
+                className="w-full px-3 py-2 text-left text-xs flex items-center gap-2 transition-all"
+                style={{ color: 'rgba(255,255,255,0.6)' }}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                <EyeOff size={13} strokeWidth={1.75} />
+                {profile?.status === 'invisible' ? 'Çevrimiçi Görün' : 'Görünmez Ol'}
+              </button>
               <button onClick={() => { onViewChange('settings'); setShowProfileMenu(false) }}
                 className="w-full px-3 py-2 text-left text-xs flex items-center gap-2 transition-all"
                 style={{ color: 'rgba(255,255,255,0.6)' }}

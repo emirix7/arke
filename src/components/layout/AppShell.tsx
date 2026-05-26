@@ -11,13 +11,13 @@ import ProfilePanel from '@/components/profile/ProfilePanel'
 import FriendRequests from '@/components/friends/FriendRequests'
 import SettingsPage from '@/components/profile/SettingsPage'
 import IncomingCallBanner from '@/components/chat/IncomingCallBanner'
+import ToastNotification from '@/components/ui/ToastNotification'
 import { useChatStore } from '@/store/chat'
 import { useServerStore } from '@/store/server'
 import { useGlobalCall } from '@/hooks/useGlobalCall'
 import { useReconnect } from '@/hooks/useReconnect'
 import { useRealtimeUpdates } from '@/hooks/useRealtimeUpdates'
 import { Volume2, PhoneOff, Mic, MicOff } from 'lucide-react'
-import VoiceCallOverlay from '@/components/chat/VoiceCallOverlay'
 import { useGlobalVoiceCall } from '@/hooks/useVoiceCall'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
@@ -29,7 +29,7 @@ export default function AppShell() {
   const [view, setView] = useState<AppView>('messages')
   const [dnd, setDnd] = useState(false)
   const [micMuted, setMicMuted] = useState(false)
-  const { activeConversation } = useChatStore()
+  const { activeConversation, conversations } = useChatStore()
   const { activeServer, setActiveServer, activeChannel, setActiveChannel } = useServerStore()
   const { profile } = useAuthStore()
   const { incomingCall, acceptCall, declineCall } = useGlobalCall()
@@ -37,7 +37,7 @@ export default function AppShell() {
   useRealtimeUpdates()
 
   // Global 1:1 call state - use dedicated hook
-  const { callState, acceptCall: acceptVoiceCall, declineCall: declineVoiceCall, endCall, toggleMute: toggleCallMute, toggleDeafen: toggleCallDeafen } = useGlobalVoiceCall()
+  const { callState, acceptCall: acceptVoiceCall, declineCall: declineVoiceCall, leaveCall, endCall, rejoinCall } = useGlobalVoiceCall()
 
   // Persistent voice channel state
   const [activeVoiceChannel, setActiveVoiceChannel] = useState<Channel | null>(null)
@@ -175,29 +175,9 @@ export default function AppShell() {
         </div>
       )}
 
-      {/* Global 1:1 call overlay - persists across navigation */}
-      {callState.active && (
-        <div className="fixed inset-0 z-[60] pointer-events-none">
-          <div className="absolute inset-0 pointer-events-auto">
-            <VoiceCallOverlay
-              roomName={callState.roomName}
-              token={callState.token}
-              status={callState.status}
-              currentUser={profile}
-              otherUser={undefined}
-              isIncoming={callState.isIncoming}
-              callerProfile={callState.callerProfile}
-              onEnd={endCall}
-              onAccept={acceptVoiceCall}
-              onDecline={declineVoiceCall}
-              muted={callState.muted}
-              deafened={callState.deafened}
-              onToggleMute={toggleCallMute}
-              onToggleDeafen={toggleCallDeafen}
-            />
-          </div>
-        </div>
-      )}
+      {/* Call overlay moved to ChatArea */}
+
+      <ToastNotification />
 
       {incomingCall && !dnd && (
         <IncomingCallBanner
@@ -212,13 +192,27 @@ export default function AppShell() {
 }
 
 function EmptyState({ text = 'Bir sohbet seç' }: { text?: string }) {
+  const isDefault = text === 'Bir sohbet seç'
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-4" style={{ background: '#0d0d14' }}>
+    <div className="flex-1 flex flex-col items-center justify-center gap-5" style={{ background: '#0d0d14' }}>
       <div className="w-20 h-20 rounded-2xl flex items-center justify-center"
         style={{ background: 'rgba(192,68,255,0.1)', border: '1px solid rgba(192,68,255,0.15)' }}>
         <span className="text-3xl">💬</span>
       </div>
-      <p className="font-syne font-semibold text-lg" style={{ color: 'rgba(255,255,255,0.6)' }}>{text}</p>
+      <div className="text-center flex flex-col gap-2">
+        <p className="font-syne font-semibold text-lg" style={{ color: 'rgba(255,255,255,0.6)' }}>{text}</p>
+        {isDefault && (
+          <p className="text-sm max-w-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            Arkadaş eklemek için sol menüdeki <span style={{ color: '#c044ff' }}>👥 Arkadaşlar</span> sekmesine git
+          </p>
+        )}
+      </div>
+      {isDefault && (
+        <div className="flex flex-col gap-2 items-center text-xs" style={{ color: 'rgba(255,255,255,0.2)' }}>
+          <p>veya sol üstteki <span style={{ color: 'rgba(255,255,255,0.4)' }}>+</span> ile yeni sunucu oluştur</p>
+          <p><span style={{ color: 'rgba(255,255,255,0.4)' }}>🔗</span> ile davet koduyla sunucuya katıl</p>
+        </div>
+      )}
     </div>
   )
 }

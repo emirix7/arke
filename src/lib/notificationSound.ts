@@ -10,6 +10,7 @@ function getCtx() {
 
 // DM / channel message sound - soft ping
 export function playMessageSound() {
+  if (typeof window !== 'undefined' && localStorage.getItem('arke_sound') === 'off') return
   try {
     const ctx = getCtx()
     const osc = ctx.createOscillator()
@@ -29,6 +30,7 @@ let callRingInterval: any = null
 export function startCallRinging() {
   stopCallRinging()
   const ring = () => {
+    if (typeof window !== 'undefined' && localStorage.getItem('arke_sound') === 'off') return
     try {
       const ctx = getCtx()
       ;[0, 200].forEach(delay => {

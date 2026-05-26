@@ -1,15 +1,31 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useChatStore } from '@/store/chat'
+import { useAuthStore } from '@/store/auth'
+import { supabase } from '@/lib/supabase'
 import { formatDistanceToNow } from 'date-fns'
 import { tr } from 'date-fns/locale'
 import ImageViewer from '@/components/ui/ImageViewer'
+import { UserMinus, Ban, ShieldOff } from 'lucide-react'
 
 export default function ProfilePanel() {
-  const { activeConversation } = useChatStore()
+  const { activeConversation, setActiveConversation, conversations, setConversations } = useChatStore()
+  const { profile } = useAuthStore()
   const [viewImage, setViewImage] = useState<string | null>(null)
+  const [removing, setRemoving] = useState(false)
+  const [blocking, setBlocking] = useState(false)
+  const [isBlocked, setIsBlocked] = useState(false)
   const other = activeConversation?.other_user
   if (!other) return null
+
+  useEffect(() => {
+    if (!profile || !other) return
+    // Check if we blocked them (use maybeSingle instead of single to avoid 406)
+    Promise.all([
+      supabase.from('blocks' as any).select('id').eq('blocker_id', profile.id).eq('blocked_id', other.id).maybeSingle(),
+      supabase.from('blocks' as any).select('id').eq('blocker_id', other.id).eq('blocked_id', profile.id).maybeSingle()
+    ]).then(([{ data: d1 }, { data: d2 }]) => setIsBlocked(!!d1 || !!d2))
+  }, [profile?.id, other?.id])
 
   const initials = other.username.slice(0, 2).toUpperCase()
   const gradients = [
@@ -24,14 +40,56 @@ export default function ProfilePanel() {
   const statusColor = other.status === 'online' ? '#3dff9a' : other.status === 'dnd' ? '#ff6b9d' : '#555'
   const statusLabel = other.status === 'online' ? 'Çevrimiçi'
     : other.status === 'dnd' ? 'Rahatsız Etme'
-    : other.status === 'idle' ? 'Uzakta'
     : lastSeen ? `Son görülme ${lastSeen}` : 'Çevrimdışı'
+
+  const removeFriendship = async () => {
+    if (!profile) return
+    await supabase.from('friendships').delete()
+      .eq('sender_id', profile.id).eq('receiver_id', other.id)
+    await supabase.from('friendships').delete()
+      .eq('sender_id', other.id).eq('receiver_id', profile.id)
+  }
+
+  const removeFromConversations = () => {
+    // Remove from conversations list in store
+    const updated = conversations.filter(c => c.id !== activeConversation?.id)
+    setConversations(updated)
+    setActiveConversation(null as any)
+  }
+
+  const handleRemoveFriend = async () => {
+    if (!profile || removing) return
+    setRemoving(true)
+    await removeFriendship()
+    setRemoving(false)
+    removeFromConversations()
+  }
+
+  const handleToggleBlock = async () => {
+    if (!profile || blocking) return
+    setBlocking(true)
+    if (isBlocked) {
+      // Unblock
+      await supabase.from('blocks' as any).delete()
+        .eq('blocker_id', profile.id).eq('blocked_id', other.id)
+      setIsBlocked(false)
+    } else {
+      // Block - also remove friendship
+      await removeFriendship()
+      await supabase.from('blocks' as any).insert({
+        blocker_id: profile.id, blocked_id: other.id
+      })
+      setIsBlocked(true)
+      removeFromConversations()
+    }
+    setBlocking(false)
+  }
 
   return (
     <div className="flex-shrink-0 flex flex-col overflow-y-auto overflow-x-hidden"
-      style={{ width: 260, minWidth: 260, maxWidth: 260, background: '#10101c', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
+      style={{ width: 260, minWidth: 260, background: '#10101c', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
 
-      {/* Banner - clickable */}
+      {/* Banner */}
       <div className="w-full flex-shrink-0 overflow-hidden relative group"
         style={{ height: 110, cursor: (other as any).banner_url ? 'pointer' : 'default' }}
         onClick={() => (other as any).banner_url && setViewImage((other as any).banner_url)}>
@@ -40,7 +98,7 @@ export default function ProfilePanel() {
             <img src={(other as any).banner_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
               style={{ background: 'rgba(0,0,0,0.3)' }}>
-              <span className="text-xs text-white font-medium">Büyüt</span>
+              <span className="text-xs text-white">Büyüt</span>
             </div>
           </>
         ) : (
@@ -48,13 +106,12 @@ export default function ProfilePanel() {
         )}
       </div>
 
-      {/* Avatar - clickable */}
+      {/* Avatar */}
       <div className="px-4 flex-shrink-0" style={{ marginTop: -32 }}>
-        <div className="relative group cursor-pointer"
-          style={{ width: 64, display: 'inline-block' }}
+        <div className="relative group cursor-pointer inline-block"
           onClick={() => other.avatar_url && setViewImage(other.avatar_url)}>
           <div className="flex items-center justify-center font-bold text-xl text-white overflow-hidden"
-            style={{ width: 64, height: 64, borderRadius: '50%', background: other.avatar_url ? 'transparent' : gradients[gradIdx], border: '4px solid #10101c', flexShrink: 0 }}>
+            style={{ width: 64, height: 64, borderRadius: '50%', background: other.avatar_url ? 'transparent' : gradients[gradIdx], border: '4px solid #10101c' }}>
             {other.avatar_url
               ? <img src={other.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               : initials}
@@ -68,7 +125,6 @@ export default function ProfilePanel() {
         </div>
       </div>
 
-      {/* Info */}
       <div className="px-4 pb-4 flex flex-col gap-3 mt-2">
         <div>
           <p className="font-syne font-bold text-base truncate" style={{ color: '#f0eeff' }}>{other.username}</p>
@@ -77,6 +133,13 @@ export default function ProfilePanel() {
             <span style={{ color: 'rgba(255,255,255,0.4)' }}>{statusLabel}</span>
           </p>
         </div>
+
+        {(other as any).activity && (
+          <p className="text-xs px-3 py-2 rounded-xl"
+            style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            {(other as any).activity_emoji ?? '🎮'} {(other as any).activity}
+          </p>
+        )}
 
         {(other as any).custom_status && (
           <p className="text-xs px-3 py-2 rounded-xl truncate"
@@ -95,13 +158,27 @@ export default function ProfilePanel() {
         <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
 
         <div className="flex flex-col gap-2">
-          <button className="py-2 rounded-xl text-xs font-medium transition-all"
-            style={{ background: 'rgba(192,68,255,0.1)', border: '1px solid rgba(192,68,255,0.2)', color: '#c044ff' }}>
-            Arkadaşlıktan Çıkar
-          </button>
-          <button className="py-2 rounded-xl text-xs font-medium transition-all"
-            style={{ background: 'rgba(255,107,157,0.08)', border: '1px solid rgba(255,107,157,0.15)', color: '#ff6b9d' }}>
-            Engelle
+          {!isBlocked && (
+            <button onClick={handleRemoveFriend} disabled={removing}
+              className="py-2 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2"
+              style={{ background: 'rgba(192,68,255,0.1)', border: '1px solid rgba(192,68,255,0.2)', color: '#c044ff', cursor: 'pointer' }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(192,68,255,0.18)'}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(192,68,255,0.1)'}>
+              <UserMinus size={12} strokeWidth={2} />
+              {removing ? 'Çıkarılıyor...' : 'Arkadaşlıktan Çıkar'}
+            </button>
+          )}
+          <button onClick={handleToggleBlock} disabled={blocking}
+            className="py-2 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2"
+            style={{
+              background: isBlocked ? 'rgba(61,255,154,0.08)' : 'rgba(255,107,157,0.08)',
+              border: `1px solid ${isBlocked ? 'rgba(61,255,154,0.2)' : 'rgba(255,107,157,0.15)'}`,
+              color: isBlocked ? '#3dff9a' : '#ff6b9d',
+              cursor: 'pointer'
+            }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '0.8'}
+            onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '1'}>
+            {isBlocked ? <><ShieldOff size={12} strokeWidth={2} /> Engeli Kaldır</> : <><Ban size={12} strokeWidth={2} /> Engelle</>}
           </button>
         </div>
       </div>

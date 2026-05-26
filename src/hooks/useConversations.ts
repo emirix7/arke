@@ -1,3 +1,4 @@
+'use client'
 import { useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
@@ -12,6 +13,20 @@ export function useConversations() {
     if (!profile) return
 
     const fetchConversations = async () => {
+      // Get blocked user IDs first
+      const { data: blocksData } = await supabase
+        .from('blocks' as any)
+        .select('blocked_id, blocker_id')
+        .or(`blocker_id.eq.${profile.id},blocked_id.eq.${profile.id}`)
+
+      const blockedIds = new Set<string>()
+      if (blocksData) {
+        blocksData.forEach((b: any) => {
+          if (b.blocker_id === profile.id) blockedIds.add(b.blocked_id)
+          if (b.blocked_id === profile.id) blockedIds.add(b.blocker_id)
+        })
+      }
+
       const { data } = await supabase
         .from('conversations')
         .select(`
@@ -24,14 +39,16 @@ export function useConversations() {
 
       if (!data) return
 
-      const convs: ConversationWithProfile[] = data.map((conv: Record<string, unknown>) => ({
-        ...(conv as ConversationWithProfile),
-        other_user: (conv.participant_1 as string) === profile.id
-          ? (conv.p2 as ConversationWithProfile['other_user'])
-          : (conv.p1 as ConversationWithProfile['other_user']),
-      }))
+      const convs: ConversationWithProfile[] = data
+        .map((conv: Record<string, unknown>) => ({
+          ...(conv as ConversationWithProfile),
+          other_user: (conv.participant_1 as string) === profile.id
+            ? (conv.p2 as ConversationWithProfile['other_user'])
+            : (conv.p1 as ConversationWithProfile['other_user']),
+        }))
+        // Filter out blocked users
+        .filter(conv => !blockedIds.has(conv.other_user.id))
 
-      // Fetch unread counts
       const withUnread = await Promise.all(
         convs.map(async (conv) => {
           const { count } = await supabase
@@ -49,13 +66,13 @@ export function useConversations() {
 
     fetchConversations()
 
-    // Realtime: new messages update last_message_at
     const channel = supabase
-      .channel('conversations_updates')
+      .channel(`conversations_updates:${profile.id}`)
       .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'direct_messages',
+        event: '*', schema: 'public', table: 'direct_messages',
+      }, fetchConversations)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'blocks',
       }, fetchConversations)
       .subscribe()
 

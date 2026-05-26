@@ -1,34 +1,53 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
-import { Room, RoomEvent, Track, createLocalAudioTrack, RoomConnectOptions } from 'livekit-client'
-import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX } from 'lucide-react'
-import { getLiveKitToken } from '@/lib/livekit'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { Room, RoomEvent, Track, createLocalAudioTrack, RoomConnectOptions, LocalVideoTrack } from 'livekit-client'
+import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, MonitorUp, MonitorOff } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import type { CallStatus } from '@/hooks/useVoiceCall'
 
-interface VoiceCallOverlayProps {
-  roomName: string; token: string; status: CallStatus
-  currentUser?: Profile | null; otherUser?: Profile
-  isIncoming: boolean; callerProfile: { username: string; avatar_url?: string } | null
-  onEnd: () => void; onAccept?: () => void; onDecline?: () => void
-  muted: boolean; deafened: boolean
-  onToggleMute: () => void; onToggleDeafen: () => void
+interface Props {
+  roomName: string
+  token: string
+  status: CallStatus
+  currentUser?: Profile | null
+  otherUser?: any
+  isIncoming: boolean
+  callerProfile: { username: string; avatar_url?: string } | null
+  onEnd: () => void
+  onLeave?: () => void
+  onAccept?: () => void
+  onDecline?: () => void
+  onRejoin?: () => void
 }
 
 export default function VoiceCallOverlay({
-  roomName, token, status, currentUser, otherUser, isIncoming,
-  callerProfile, onEnd, onAccept, onDecline, muted, deafened,
-  onToggleMute, onToggleDeafen
-}: VoiceCallOverlayProps) {
+  roomName, token, status, currentUser, otherUser,
+  isIncoming, callerProfile, onEnd, onLeave, onAccept, onDecline, onRejoin,
+}: Props) {
   const [duration, setDuration] = useState(0)
   const [connected, setConnected] = useState(false)
+  const [muted, setMuted] = useState(false)
+  const [deafened, setDeafened] = useState(false)
+  const [sharing, setSharing] = useState(false)
   const [otherSpeaking, setOtherSpeaking] = useState(false)
   const [mySpeaking, setMySpeaking] = useState(false)
+  const [remoteSharing, setRemoteSharing] = useState(false)
+  const [graceCountdown, setGraceCountdown] = useState(180)
+  const [otherAway, setOtherAway] = useState(false)
   const roomRef = useRef<Room | null>(null)
-  const audioElements = useRef<Map<string, HTMLAudioElement>>(new Map())
 
+  const isRinging = status === 'ringing'
+  const isCalling = status === 'calling'
+  const isActive = status === 'connected'
+  const isAway = status === 'away'
+  const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map())
+  const localScreenRef = useRef<HTMLVideoElement>(null)
+  const remoteScreenRef = useRef<HTMLVideoElement>(null)
+
+  // Connect to LiveKit room when status === 'connected' and token present
   useEffect(() => {
     if (status !== 'connected' || !token) return
+
     const room = new Room({
       adaptiveStream: true, dynacast: true,
       audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -40,173 +59,326 @@ export default function VoiceCallOverlay({
       try {
         const audioTrack = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true })
         await room.localParticipant.publishTrack(audioTrack)
-      } catch (e) { console.error('Mic error:', e) }
+      } catch (e) { console.error('Mic:', e) }
     })
 
     room.on(RoomEvent.Disconnected, () => {
       setConnected(false)
-      audioElements.current.forEach(el => el.remove())
-      audioElements.current.clear()
+      audioRefs.current.forEach(el => el.remove())
+      audioRefs.current.clear()
     })
 
     room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
-        let el = audioElements.current.get(participant.identity)
-        if (!el) { el = document.createElement('audio'); el.autoplay = true; document.body.appendChild(el); audioElements.current.set(participant.identity, el) }
+        let el = audioRefs.current.get(participant.identity)
+        if (!el) {
+          el = document.createElement('audio')
+          el.autoplay = true
+          document.body.appendChild(el)
+          audioRefs.current.set(participant.identity, el)
+        }
         track.attach(el)
+      }
+      if (track.kind === Track.Kind.Video && track.source === Track.Source.ScreenShare) {
+        setRemoteSharing(true)
+        setTimeout(() => { if (remoteScreenRef.current) track.attach(remoteScreenRef.current) }, 100)
       }
     })
 
-    room.on(RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
-      if (track.kind === Track.Kind.Audio) {
-        track.detach()
-        const el = audioElements.current.get(participant.identity)
-        if (el) { el.remove(); audioElements.current.delete(participant.identity) }
-      }
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      if (track.kind === Track.Kind.Audio) track.detach()
+      if (track.kind === Track.Kind.Video && track.source === Track.Source.ScreenShare) setRemoteSharing(false)
     })
 
     room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-      const ids = new Set(speakers.map(s => s.identity))
-      setOtherSpeaking(speakers.some(s => s.identity !== room.localParticipant.identity))
-      setMySpeaking(ids.has(room.localParticipant.identity))
+      const local = room.localParticipant.identity
+      setOtherSpeaking(speakers.some(s => s.identity !== local))
+      setMySpeaking(speakers.some(s => s.identity === local))
     })
 
     room.connect(process.env.NEXT_PUBLIC_LIVEKIT_URL!, token, { autoSubscribe: true } as RoomConnectOptions)
-      .catch(e => console.error('Connect error:', e))
+      .catch(e => console.error('Connect:', e))
 
     return () => {
       room.disconnect()
-      audioElements.current.forEach(el => el.remove())
-      audioElements.current.clear()
+      audioRefs.current.forEach(el => el.remove())
+      audioRefs.current.clear()
+      setConnected(false)
+      setMuted(false)
     }
-  }, [status, token])
+  }, [token]) // token değişince yeniden bağlan
 
+  // Listen for other person's away status
   useEffect(() => {
-    if (!roomRef.current) return
-    roomRef.current.localParticipant.audioTrackPublications.forEach(pub => {
-      if (pub.track) muted ? pub.track.mute() : pub.track.unmute()
-    })
-  }, [muted])
+    if (!roomName) return
+    const { createClient } = require('@supabase/supabase-js')
+    const { supabase } = require('@/lib/supabase')
+    const ch = supabase
+      .channel(`overlay_call:${roomName}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'call_signals',
+      }, (payload: any) => {
+        const s = payload.new
+        if (s.room_name !== roomName) return
+        if (s.status === 'away' && !isAway) {
+          // Other person left
+          setOtherAway(true)
+        }
+        if (s.status === 'accepted' && otherAway) {
+          // Other person rejoined
+          setOtherAway(false)
+        }
+        if (s.status === 'ended') {
+          setOtherAway(false)
+        }
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [roomName, isAway, otherAway])
 
+  // Mute
   useEffect(() => {
-    audioElements.current.forEach(el => { el.volume = deafened ? 0 : 1 })
+    if (!roomRef.current || !connected) return
+    ;(async () => {
+      try { await roomRef.current!.localParticipant.setMicrophoneEnabled(!muted) } catch {
+        roomRef.current?.localParticipant.audioTrackPublications.forEach(pub => {
+          if (pub.track) muted ? pub.track.mute() : pub.track.unmute()
+        })
+      }
+    })()
+  }, [muted, connected])
+
+  // Deafen
+  useEffect(() => {
+    audioRefs.current.forEach(el => { el.volume = deafened ? 0 : 1 })
   }, [deafened])
 
+  // Call duration timer
   useEffect(() => {
     if (!connected) return
-    const interval = setInterval(() => setDuration(d => d + 1), 1000)
-    return () => clearInterval(interval)
+    const t = setInterval(() => setDuration(d => d + 1), 1000)
+    return () => clearInterval(t)
   }, [connected])
 
+  // Grace period countdown
+  useEffect(() => {
+    if (!isAway) { setGraceCountdown(180); return }
+    setGraceCountdown(180)
+    const t = setInterval(() => setGraceCountdown(p => {
+      if (p <= 1) { clearInterval(t); return 0 }
+      return p - 1
+    }), 1000)
+    return () => clearInterval(t)
+  }, [isAway])
+
+  const startScreenShare = async () => {
+    if (!roomRef.current || !connected) return
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      const vt = stream.getVideoTracks()[0]
+      if (!vt) return
+      if (localScreenRef.current) localScreenRef.current.srcObject = stream
+      const lkTrack = new LocalVideoTrack(vt, undefined, false)
+      await roomRef.current.localParticipant.publishTrack(lkTrack, { source: Track.Source.ScreenShare, simulcast: false })
+      vt.onended = stopScreenShare
+      setSharing(true)
+    } catch (e: any) { if (e.name !== 'AbortError' && e.name !== 'NotAllowedError') console.error(e) }
+  }
+
+  const stopScreenShare = async () => {
+    if (localScreenRef.current?.srcObject) {
+      ;(localScreenRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop())
+      localScreenRef.current.srcObject = null
+    }
+    try {
+      roomRef.current?.localParticipant.videoTrackPublications.forEach(pub => {
+        if (pub.source === Track.Source.ScreenShare && pub.videoTrack)
+          roomRef.current!.localParticipant.unpublishTrack(pub.videoTrack)
+      })
+    } catch {}
+    setSharing(false)
+  }
+
   const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
-  const displayUser = isIncoming ? callerProfile : otherUser
-  const displayName = displayUser?.username ?? '...'
+
+  const otherName = otherUser?.username ?? callerProfile?.username ?? '...'
+  const otherAvatar = otherUser?.avatar_url ?? (callerProfile as any)?.avatar_url
+  const myName = currentUser?.username ?? 'Sen'
+  const myAvatar = currentUser?.avatar_url
+
+
 
   return (
-    // Half-screen overlay, not full screen - sits on top half of chat
-    <div className="absolute top-0 left-0 right-0 flex flex-col items-center justify-center z-50"
-      style={{ height: '45%', background: 'rgba(8,8,16,0.96)', backdropFilter: 'blur(16px)', borderBottom: '1px solid rgba(192,68,255,0.15)' }}>
+    <div className="flex flex-col h-full w-full"
+      style={{ background: '#0d0d1a', borderBottom: '1px solid rgba(192,68,255,0.2)' }}>
 
-      <p className="text-xs font-semibold tracking-widest uppercase mb-5"
-        style={{ color: 'rgba(255,255,255,0.3)' }}>
-        {status === 'calling' ? 'Aranıyor...' : status === 'ringing' ? 'Gelen Arama' : connected ? fmt(duration) : 'Bağlanıyor...'}
-      </p>
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-5 py-3 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <span className="text-xs font-semibold tracking-wider uppercase"
+          style={{ color: 'rgba(255,255,255,0.35)' }}>
+          {isCalling ? 'Aranıyor...' : isRinging ? 'Gelen Arama' : isAway ? '🔴 Aramadan ayrıldın' : isActive && connected ? fmt(duration) : 'Bağlanıyor...'}
+        </span>
+        {isAway && (
+          <span className="text-xs px-2 py-1 rounded-lg font-semibold" style={{ background: 'rgba(255,193,7,0.12)', color: '#ffc107', border: '1px solid rgba(255,193,7,0.2)' }}>
+            {Math.floor(graceCountdown / 60)}:{(graceCountdown % 60).toString().padStart(2, '0')} içinde katıl
+          </span>
+        )}
+      </div>
+
+      {/* Screen share */}
+      {(sharing || remoteSharing) && (
+        <div className="flex gap-2 p-3 flex-shrink-0" style={{ maxHeight: '35%' }}>
+          {sharing && (
+            <div className="flex-1 rounded-xl overflow-hidden relative" style={{ background: '#000', border: '1px solid rgba(192,68,255,0.4)' }}>
+              <span className="absolute top-1.5 left-1.5 text-xs px-1.5 py-0.5 rounded z-10" style={{ background: 'rgba(0,0,0,0.7)', color: 'white' }}>Sen</span>
+              <video ref={localScreenRef} autoPlay muted playsInline className="w-full h-full object-contain" />
+            </div>
+          )}
+          {remoteSharing && (
+            <div className="flex-1 rounded-xl overflow-hidden relative" style={{ background: '#000', border: '1px solid rgba(61,255,154,0.4)' }}>
+              <span className="absolute top-1.5 left-1.5 text-xs px-1.5 py-0.5 rounded z-10" style={{ background: 'rgba(0,0,0,0.7)', color: 'white' }}>{otherName}</span>
+              <video ref={remoteScreenRef} autoPlay playsInline className="w-full h-full object-contain" />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Avatars */}
-      <div className="flex items-center gap-10 mb-6">
-        {/* Other user */}
-        <div className="flex flex-col items-center gap-2">
-          <div className="relative">
-            {otherSpeaking && status === 'connected' && (
-              <div className="absolute -inset-1.5 rounded-full"
-                style={{ border: '2px solid #3dff9a', boxShadow: '0 0 10px rgba(61,255,154,0.4)', borderRadius: '50%' }} />
-            )}
-            <div className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center text-xl font-bold text-white"
-              style={{
-                background: 'linear-gradient(135deg, #ff6b9d, #c044ff)',
-                border: `3px solid ${otherSpeaking ? '#3dff9a' : 'rgba(255,255,255,0.1)'}`,
-                transition: 'border-color 0.15s',
-              }}>
-              {displayUser?.avatar_url
-                ? <img src={displayUser.avatar_url} alt="" className="w-full h-full object-cover" />
-                : displayName.slice(0, 2).toUpperCase()}
+      <div className="flex-1 flex items-center justify-center">
+        <div className="flex items-center gap-8">
+          {/* Other */}
+          <div className="flex flex-col items-center gap-3">
+            <div className="relative">
+              {otherSpeaking && isActive && (
+                <div className="absolute -inset-1.5 rounded-full" style={{ border: '2px solid #3dff9a', borderRadius: '50%', boxShadow: '0 0 16px rgba(61,255,154,0.35)' }} />
+              )}
+              {otherAway ? (
+                <div className="w-16 h-16 rounded-full flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '3px dashed rgba(255,255,255,0.2)' }}>
+                  <span style={{ fontSize: 24 }}>👻</span>
+                </div>
+              ) : (
+                <div className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center text-xl font-bold text-white"
+                  style={{
+                    background: 'linear-gradient(135deg, #ff6b9d, #c044ff)',
+                    border: `3px solid ${otherSpeaking && isActive ? '#3dff9a' : 'rgba(255,255,255,0.12)'}`,
+                    transition: 'all 0.2s',
+                  }}>
+                  {otherAvatar
+                    ? <img src={otherAvatar} alt="" className="w-full h-full object-cover" />
+                    : otherName.slice(0, 2).toUpperCase()}
+                </div>
+              )}
             </div>
+            <p className="text-sm font-semibold" style={{ color: otherAway ? '#ffc107' : otherSpeaking && isActive ? '#3dff9a' : 'rgba(255,255,255,0.85)', transition: 'color 0.2s' }}>
+              {otherAway ? 'Ayrıldı' : otherName}
+            </p>
           </div>
-          <p className="text-xs font-medium" style={{ color: otherSpeaking ? '#3dff9a' : 'rgba(255,255,255,0.7)', transition: 'color 0.15s' }}>
-            {displayName}
-          </p>
-        </div>
 
-        {/* Pulse bars */}
-        <div className="flex items-center gap-1">
-          {[0,1,2].map(i => (
-            <div key={i} className="w-1 rounded-full transition-all duration-300"
-              style={{
-                height: status === 'connected' ? [14, 22, 14][i] : 6,
-                background: status === 'connected' ? '#3dff9a' : 'rgba(255,255,255,0.2)',
-                animation: status === 'connected' ? `pulse-dot ${0.7 + i * 0.15}s ease-in-out infinite alternate` : 'none',
-              }} />
-          ))}
-        </div>
-
-        {/* Current user */}
-        <div className="flex flex-col items-center gap-2">
-          <div className="relative">
-            {mySpeaking && !muted && status === 'connected' && (
-              <div className="absolute -inset-1.5 rounded-full"
-                style={{ border: '2px solid #3dff9a', boxShadow: '0 0 10px rgba(61,255,154,0.4)', borderRadius: '50%' }} />
-            )}
-            <div className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center text-xl font-bold text-white"
-              style={{
-                background: 'linear-gradient(135deg, #00d4ff, #c044ff)',
-                border: `3px solid ${mySpeaking && !muted ? '#3dff9a' : 'rgba(255,255,255,0.1)'}`,
-                opacity: muted ? 0.5 : 1, transition: 'border-color 0.15s, opacity 0.2s',
-              }}>
-              {currentUser?.avatar_url
-                ? <img src={currentUser.avatar_url} alt="" className="w-full h-full object-cover" />
-                : (currentUser?.username ?? 'Sen').slice(0, 2).toUpperCase()}
+          {/* Pulse */}
+          {(isActive || isCalling || isRinging) && (
+            <div className="flex items-center gap-1.5">
+              {[0,1,2].map(i => (
+                <div key={i} className="w-1.5 rounded-full" style={{
+                  height: isActive ? [14, 22, 14][i] : 8,
+                  background: isActive ? '#3dff9a' : 'rgba(255,255,255,0.2)',
+                  transition: 'height 0.3s, background 0.3s',
+                }} />
+              ))}
             </div>
+          )}
+
+          {/* Me */}
+          <div className="flex flex-col items-center gap-3">
+            <div className="relative">
+              {mySpeaking && !muted && isActive && (
+                <div className="absolute -inset-1.5 rounded-full" style={{ border: '2px solid #3dff9a', borderRadius: '50%', boxShadow: '0 0 16px rgba(61,255,154,0.35)' }} />
+              )}
+              {isAway ? (
+                <div className="w-16 h-16 rounded-full flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '3px dashed rgba(255,255,255,0.2)' }}>
+                  <span style={{ fontSize: 24 }}>👻</span>
+                </div>
+              ) : (
+                <div className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center text-xl font-bold text-white"
+                  style={{
+                    background: 'linear-gradient(135deg, #00d4ff, #c044ff)',
+                    border: `3px solid ${mySpeaking && !muted && isActive ? '#3dff9a' : 'rgba(255,255,255,0.12)'}`,
+                    transition: 'all 0.2s',
+                  }}>
+                  {myAvatar
+                    ? <img src={myAvatar} alt="" className="w-full h-full object-cover" />
+                    : myName.slice(0, 2).toUpperCase()}
+                </div>
+              )}
+              {!isAway && muted && (
+                <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center"
+                  style={{ background: '#ff6b9d', border: '2px solid #0d0d1a' }}>
+                  <MicOff size={13} strokeWidth={2.5} style={{ color: 'white' }} />
+                </div>
+              )}
+            </div>
+            <p className="text-sm font-semibold" style={{ color: isAway ? '#ffc107' : mySpeaking && !muted && isActive ? '#3dff9a' : 'rgba(255,255,255,0.85)', transition: 'color 0.2s' }}>
+              {isAway ? 'Ayrıldın' : myName}
+            </p>
           </div>
-          <p className="text-xs font-medium" style={{ color: mySpeaking && !muted ? '#3dff9a' : 'rgba(255,255,255,0.7)', transition: 'color 0.15s' }}>
-            {currentUser?.username ?? 'Sen'}
-            {muted && <span style={{ color: '#ff6b9d' }}> (sessiz)</span>}
-          </p>
         </div>
       </div>
 
-      {/* Buttons */}
-      {status === 'ringing' && isIncoming ? (
-        <div className="flex gap-5">
-          <CallBtn onClick={onDecline!} icon={<PhoneOff size={18} strokeWidth={2} />} label="Reddet" color="#ff6b9d" bg="rgba(255,107,157,0.2)" border="rgba(255,107,157,0.4)" />
-          <CallBtn onClick={onAccept!} icon={<Phone size={18} strokeWidth={2} />} label="Kabul Et" color="#3dff9a" bg="rgba(61,255,154,0.2)" border="rgba(61,255,154,0.4)" />
-        </div>
-      ) : status === 'calling' ? (
-        <CallBtn onClick={onEnd} icon={<PhoneOff size={18} strokeWidth={2} />} label="İptal" color="#ff6b9d" bg="rgba(255,107,157,0.2)" border="rgba(255,107,157,0.4)" />
-      ) : (
-        <div className="flex gap-3">
-          <CallBtn onClick={onToggleMute} icon={muted ? <MicOff size={16} strokeWidth={2} /> : <Mic size={16} strokeWidth={2} />}
-            label={muted ? 'Aç' : 'Kapat'} color={muted ? '#ff6b9d' : 'rgba(255,255,255,0.6)'}
-            bg={muted ? 'rgba(255,107,157,0.15)' : 'rgba(255,255,255,0.06)'} border={muted ? 'rgba(255,107,157,0.35)' : 'rgba(255,255,255,0.1)'} size="sm" />
-          <CallBtn onClick={onToggleDeafen} icon={deafened ? <VolumeX size={16} strokeWidth={2} /> : <Volume2 size={16} strokeWidth={2} />}
-            label={deafened ? 'Aç' : 'Kapat'} color={deafened ? '#ff6b9d' : 'rgba(255,255,255,0.6)'}
-            bg={deafened ? 'rgba(255,107,157,0.15)' : 'rgba(255,255,255,0.06)'} border={deafened ? 'rgba(255,107,157,0.35)' : 'rgba(255,255,255,0.1)'} size="sm" />
-          <CallBtn onClick={onEnd} icon={<PhoneOff size={16} strokeWidth={2} />} label="Bitir"
-            color="#ff6b9d" bg="rgba(255,107,157,0.2)" border="rgba(255,107,157,0.4)" size="sm" />
-        </div>
-      )}
+      {/* Controls */}
+      <div className="flex items-center justify-center gap-4 pb-4 flex-shrink-0">
+        {isRinging && isIncoming ? (
+          <>
+            <Btn onClick={onDecline!} icon={<PhoneOff size={22} strokeWidth={2} />} color="#ff6b9d" bg="rgba(255,107,157,0.2)" border="rgba(255,107,157,0.5)" size={56} label="Reddet" />
+            <Btn onClick={onAccept!} icon={<Phone size={22} strokeWidth={2} />} color="#3dff9a" bg="rgba(61,255,154,0.2)" border="rgba(61,255,154,0.5)" size={56} label="Kabul Et" />
+          </>
+        ) : isCalling ? (
+          <Btn onClick={onEnd} icon={<PhoneOff size={22} strokeWidth={2} />} color="#ff6b9d" bg="rgba(255,107,157,0.2)" border="rgba(255,107,157,0.5)" size={56} label="İptal" />
+        ) : isAway ? (
+          <>
+            <Btn onClick={onRejoin!} icon={<Phone size={20} strokeWidth={2} />} color="#3dff9a" bg="rgba(61,255,154,0.15)" border="rgba(61,255,154,0.4)" size={48} label="Geri Katıl" />
+            <Btn onClick={onEnd} icon={<PhoneOff size={20} strokeWidth={2} />} color="#ff6b9d" bg="rgba(255,107,157,0.15)" border="rgba(255,107,157,0.4)" size={48} label="Aramayı Bitir" />
+          </>
+        ) : (
+          <>
+            <Btn onClick={() => setMuted(p => !p)}
+              icon={muted ? <MicOff size={18} strokeWidth={2} /> : <Mic size={18} strokeWidth={2} />}
+              color={muted ? '#ff6b9d' : 'rgba(255,255,255,0.7)'}
+              bg={muted ? 'rgba(255,107,157,0.15)' : 'rgba(255,255,255,0.08)'}
+              border={muted ? 'rgba(255,107,157,0.4)' : 'rgba(255,255,255,0.15)'}
+              label={muted ? 'Mikrofonu Aç' : 'Sessize Al'} />
+            <Btn onClick={() => setDeafened(p => !p)}
+              icon={deafened ? <VolumeX size={18} strokeWidth={2} /> : <Volume2 size={18} strokeWidth={2} />}
+              color={deafened ? '#ff6b9d' : 'rgba(255,255,255,0.7)'}
+              bg={deafened ? 'rgba(255,107,157,0.15)' : 'rgba(255,255,255,0.08)'}
+              border={deafened ? 'rgba(255,107,157,0.4)' : 'rgba(255,255,255,0.15)'}
+              label={deafened ? 'Sesi Aç' : 'Sesi Kapat'} />
+            <Btn onClick={sharing ? stopScreenShare : startScreenShare}
+              icon={sharing ? <MonitorOff size={18} strokeWidth={2} /> : <MonitorUp size={18} strokeWidth={2} />}
+              color={sharing ? '#c044ff' : 'rgba(255,255,255,0.7)'}
+              bg={sharing ? 'rgba(192,68,255,0.15)' : 'rgba(255,255,255,0.08)'}
+              border={sharing ? 'rgba(192,68,255,0.4)' : 'rgba(255,255,255,0.15)'}
+              label={sharing ? 'Paylaşımı Durdur' : 'Ekran Paylaş'} />
+            <Btn onClick={onLeave ?? onEnd}
+              icon={<PhoneOff size={18} strokeWidth={2} />}
+              color="#ff6b9d" bg="rgba(255,107,157,0.2)" border="rgba(255,107,157,0.5)"
+              label="Ayrıl" />
+          </>
+        )}
+      </div>
     </div>
   )
 }
 
-function CallBtn({ onClick, icon, label, color, bg, border, size = 'md' }: {
-  onClick: () => void; icon: React.ReactNode; label: string
-  color: string; bg: string; border: string; size?: 'sm' | 'md'
+function Btn({ onClick, icon, color, bg, border, size = 44, label }: {
+  onClick: () => void; icon: React.ReactNode; color: string; bg: string; border: string
+  size?: number; label?: string
 }) {
-  const s = size === 'sm' ? 10 : 12
   return (
     <button onClick={onClick} title={label}
-      className="rounded-full flex items-center justify-center transition-all"
-      style={{ width: s * 4, height: s * 4, background: bg, border: `2px solid ${border}`, color }}>
+      className="rounded-full flex items-center justify-center transition-all duration-150 flex-shrink-0"
+      style={{ width: size, height: size, background: bg, border: `2px solid ${border}`, color }}>
       {icon}
     </button>
   )

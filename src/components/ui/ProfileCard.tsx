@@ -56,8 +56,9 @@ export default function ProfileCard({ profile, x, y, onClose, onMessage, onRemov
   }, [])
 
   const cardW = 240
-  const adjustedX = Math.min(x, window.innerWidth - cardW - 8)
-  const adjustedY = Math.min(y, window.innerHeight - 380)
+  const cardH = 400
+  const adjustedX = Math.min(Math.max(x, 8), window.innerWidth - cardW - 8)
+  const adjustedY = Math.min(Math.max(y, 8), window.innerHeight - cardH - 8)
   const statusColor = profile.status === 'online' ? '#3dff9a' : profile.status === 'dnd' ? '#ff6b9d' : profile.status === 'idle' ? '#ffb347' : '#555'
   const statusLabel = profile.status === 'online' ? 'Çevrimiçi' : profile.status === 'dnd' ? 'Rahatsız Etme' : profile.status === 'idle' ? 'Uzakta' : 'Çevrimdışı'
   const lastSeen = profile.status !== 'online' && profile.updated_at

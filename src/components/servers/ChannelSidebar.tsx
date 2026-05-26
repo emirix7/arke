@@ -255,18 +255,36 @@ function MemberItem({ member, onRightClick }: { member: any; onRightClick: (e: R
 
 function InviteModal({ server, onClose }: { server: any; onClose: () => void }) {
   const [copied, setCopied] = useState(false)
-  const copy = () => { navigator.clipboard.writeText(server.invite_code); setCopied(true); setTimeout(() => setCopied(false), 2000) }
+  const [code, setCode] = useState(server.invite_code || '')
+  const [regenerating, setRegenerating] = useState(false)
+
+  const copy = () => { navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 2000) }
+
+  const regenerate = async () => {
+    setRegenerating(true)
+    const newCode = Math.random().toString(36).slice(2, 10)
+    await supabase.from('servers').update({ invite_code: newCode }).eq('id', server.id)
+    setCode(newCode)
+    setCopied(false)
+    setRegenerating(false)
+  }
+
   return (
     <Modal title="Davet Linki" onClose={onClose}>
       <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Bu kodu arkadaşlarınla paylaş</p>
       <div className="flex items-center gap-2 px-4 py-3 rounded-xl"
         style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <span className="flex-1 font-mono text-sm font-bold" style={{ color: '#c044ff' }}>{server.invite_code}</span>
+        <span className="flex-1 font-mono text-sm font-bold" style={{ color: '#c044ff' }}>{code}</span>
         <button onClick={copy} className="text-xs px-3 py-1 rounded-lg"
           style={{ background: copied ? 'rgba(61,255,154,0.15)' : 'rgba(192,68,255,0.15)', color: copied ? '#3dff9a' : '#c044ff' }}>
           {copied ? 'Kopyalandı!' : 'Kopyala'}
         </button>
       </div>
+      <button onClick={regenerate} disabled={regenerating}
+        className="w-full py-2 rounded-xl text-xs font-medium transition-all"
+        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.4)', cursor: regenerating ? 'not-allowed' : 'pointer' }}>
+        {regenerating ? 'Yenileniyor...' : '↻ Yeni davet kodu üret'}
+      </button>
     </Modal>
   )
 }

@@ -1,8 +1,9 @@
 'use client'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
-import { Check, AlertCircle } from 'lucide-react'
+import { Check, AlertCircle, Bell, BellOff, UserX, ShieldOff } from 'lucide-react'
+import { usePushNotifications } from '@/hooks/usePushNotifications'
 
 export default function SettingsPage() {
   const { profile, updateProfile } = useAuthStore()
@@ -19,6 +20,36 @@ export default function SettingsPage() {
   const [showNewPw, setShowNewPw] = useState(false)
   const [pwError, setPwError] = useState('')
   const [pwSuccess, setPwSuccess] = useState(false)
+  const { permission, subscribed, requestPermission, unsubscribe } = usePushNotifications()
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('arke_sound') !== 'off'
+    return true
+  })
+
+  const toggleSound = () => {
+    const newVal = !soundEnabled
+    setSoundEnabled(newVal)
+    localStorage.setItem('arke_sound', newVal ? 'on' : 'off')
+  }
+  const [blockedUsers, setBlockedUsers] = useState<any[]>([])
+  const [loadingBlocked, setLoadingBlocked] = useState(false)
+
+  useEffect(() => {
+    if (!profile) return
+    setLoadingBlocked(true)
+    ;(supabase as any).from('blocks')
+      .select('id, blocked_id, profile:profiles!blocks_blocked_id_fkey(username, avatar_url)')
+      .eq('blocker_id', profile.id)
+      .then(({ data }: any) => {
+        setBlockedUsers(data ?? [])
+        setLoadingBlocked(false)
+      })
+  }, [profile?.id])
+
+  const unblockUser = async (blockId: string) => {
+    await (supabase as any).from('blocks').delete().eq('id', blockId)
+    setBlockedUsers(prev => prev.filter(b => b.id !== blockId))
+  }
   const [saving, setSaving] = useState(false)
   const [activity, setActivity] = useState((profile as any)?.activity ?? '')
   const [activityEmoji, setActivityEmoji] = useState((profile as any)?.activity_emoji ?? '🎮')
@@ -203,6 +234,87 @@ export default function SettingsPage() {
                 style={{ marginTop: 10, width: '100%', padding: '10px 0', borderRadius: 12, fontSize: 13, fontWeight: 600, background: (currentPassword && newPassword) ? 'linear-gradient(135deg, #c044ff, #00d4ff)' : 'rgba(255,255,255,0.05)', color: (currentPassword && newPassword) ? 'white' : 'rgba(255,255,255,0.3)', border: 'none', cursor: (currentPassword && newPassword) ? 'pointer' : 'not-allowed' }}>
                 Şifreyi Güncelle
               </button>
+            </Field>
+          </div>
+
+          {/* Blocked Users */}
+          <div style={{ background: '#10101c', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 20, marginBottom: 12 }}>
+            <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', marginBottom: 12 }}>
+              Engellenen Kullanıcılar
+            </p>
+            {loadingBlocked ? (
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>Yükleniyor...</p>
+            ) : blockedUsers.length === 0 ? (
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>Engellenen kullanıcı yok.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {blockedUsers.map(b => (
+                  <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', overflow: 'hidden', background: 'linear-gradient(135deg, #ff6b9d, #c044ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'white', flexShrink: 0 }}>
+                      {b.profile?.avatar_url
+                        ? <img src={b.profile.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        : (b.profile?.username ?? '?').slice(0, 2).toUpperCase()}
+                    </div>
+                    <span style={{ flex: 1, fontSize: 13, color: '#e8e6f0' }}>{b.profile?.username ?? 'Bilinmeyen'}</span>
+                    <button
+                      onClick={() => unblockUser(b.id)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600, background: 'rgba(61,255,154,0.1)', border: '1px solid rgba(61,255,154,0.2)', color: '#3dff9a', cursor: 'pointer' }}>
+                      <ShieldOff size={11} strokeWidth={2} /> Engeli Kaldır
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sound Settings */}
+          <div style={{ background: '#10101c', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 20, marginBottom: 12 }}>
+            <Field label="Bildirim Sesi">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div>
+                  <p style={{ fontSize: 13, color: '#e8e6f0', marginBottom: 3 }}>Mesaj ve bildirim sesleri</p>
+                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>{soundEnabled ? 'Sesler açık' : 'Sesler kapalı'}</p>
+                </div>
+                <button onClick={toggleSound}
+                  style={{ padding: '8px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, flexShrink: 0, cursor: 'pointer', border: 'none',
+                    background: soundEnabled ? 'rgba(61,255,154,0.12)' : 'rgba(255,255,255,0.06)',
+                    color: soundEnabled ? '#3dff9a' : 'rgba(255,255,255,0.4)' }}>
+                  {soundEnabled ? '🔊 Açık' : '🔇 Kapalı'}
+                </button>
+              </div>
+            </Field>
+          </div>
+
+          {/* Push Notifications */}
+          <div style={{ background: '#10101c', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 20, marginBottom: 12 }}>
+            <Field label="Bildirimler">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div>
+                  <p style={{ fontSize: 13, color: '#e8e6f0', marginBottom: 3 }}>
+                    {subscribed ? 'Bildirimler açık' : 'Uygulama kapalıyken bildirim al'}
+                  </p>
+                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
+                    {permission === 'denied' ? 'Tarayıcı bildirimlere izin vermedi. Tarayıcı ayarlarından etkinleştir.' :
+                     subscribed ? 'Mesaj geldiğinde bildirim alacaksın' : 'Masaüstü bildirimleri etkinleştir'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => subscribed ? unsubscribe() : requestPermission()}
+                  disabled={permission === 'denied'}
+                  style={{
+                    padding: '8px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600,
+                    background: subscribed ? 'rgba(255,107,157,0.12)' : 'linear-gradient(135deg, #c044ff, #00d4ff)',
+                    border: subscribed ? '1px solid rgba(255,107,157,0.25)' : 'none',
+                    color: subscribed ? '#ff6b9d' : 'white',
+                    cursor: permission === 'denied' ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+                    opacity: permission === 'denied' ? 0.5 : 1,
+                  }}>
+                  {subscribed
+                    ? <><BellOff size={13} strokeWidth={2} /> Kapat</>
+                    : <><Bell size={13} strokeWidth={2} /> Etkinleştir</>}
+                </button>
+              </div>
             </Field>
           </div>
 

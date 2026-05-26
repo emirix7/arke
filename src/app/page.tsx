@@ -42,7 +42,7 @@ export default function Home() {
 
   useEffect(() => {
     if (profile) {
-      useAuthStore.getState().updateProfile({ status: 'online' })
+      const p = useAuthStore.getState().profile; if (p?.status !== 'invisible') useAuthStore.getState().updateProfile({ status: 'online' })
     }
     const handleUnload = () => {
       const { profile: p, updateProfile } = useAuthStore.getState()

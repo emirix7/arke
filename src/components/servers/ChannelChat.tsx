@@ -1,5 +1,5 @@
 'use client'
-import { Paperclip, Send, Pencil, Trash2, Check, X } from 'lucide-react'
+import { Paperclip, Send, Pencil, Trash2, Check, X, Reply } from 'lucide-react'
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
@@ -9,6 +9,7 @@ import { playMessageSound } from '@/lib/notificationSound'
 import { notifyServerMembers } from '@/hooks/useNotifications'
 import { format } from 'date-fns'
 import EmojiPickerBtn from '@/components/chat/EmojiPickerBtn'
+import ReplyBar from '@/components/chat/ReplyBar'
 import type { ChannelMessage } from '@/types/server'
 
 export default function ChannelChat() {
@@ -18,6 +19,7 @@ export default function ChannelChat() {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState('')
   const [sending, setSending] = useState(false)
+  const [replyTo, setReplyTo] = useState<{ id: string; content: string; username: string } | null>(null)
   const [mentionSearch, setMentionSearch] = useState('')
   const [showMentions, setShowMentions] = useState(false)
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -42,6 +44,7 @@ export default function ChannelChat() {
   useEffect(() => {
     if (!channelId) return
     fetchMessages()
+    setTimeout(() => inputRef.current?.focus(), 150)
     prevLenRef.current = 0
     const channel = supabase.channel(`ch_msgs:${channelId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'channel_messages', filter: `channel_id=eq.${channelId}` },
@@ -128,8 +131,11 @@ export default function ChannelChat() {
     }
     const content = input.trim()
     const { data: newMsg } = await (supabase.from('channel_messages') as any).insert({
-      channel_id: channelId, sender_id: profile.id, content: content || null, image_url
+      channel_id: channelId, sender_id: profile.id, content: content || null, image_url,
+      reply_to_id: replyTo?.id ?? null,
+      reply_preview: replyTo ? `@${replyTo.username}: ${replyTo.content?.slice(0, 80)}` : null
     }).select().single()
+    setReplyTo(null)
     if (newMsg) {
       const mentionRegex = /@(\w+)/g; let match
       while ((match = mentionRegex.exec(content)) !== null) {
@@ -219,6 +225,8 @@ export default function ChannelChat() {
         </div>
       )}
 
+      <ReplyBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
+
       <div className="px-5 pb-4 pt-2 flex-shrink-0">
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-2xl"
           style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -285,6 +293,12 @@ function MessageItem({ msg, currentUserId, canDelete, canEdit, onDelete, onEdit 
           <span className="text-xs" style={{ color: 'rgba(255,255,255,0.2)' }}>{format(new Date(msg.created_at), 'HH:mm')}</span>
           {(msg as any).edited_at && <span className="text-xs" style={{ color: 'rgba(255,255,255,0.2)' }}>(düzenlendi)</span>}
         </div>
+        {msg.reply_preview && (
+          <div className="px-3 py-1.5 mb-1 rounded-xl text-xs"
+            style={{ background: 'rgba(255,255,255,0.05)', borderLeft: '2px solid rgba(192,68,255,0.5)', color: 'rgba(255,255,255,0.45)' }}>
+            {msg.reply_preview}
+          </div>
+        )}
         {editing ? (
           <div className="flex items-center gap-2">
             <input value={editText} onChange={e => setEditText(e.target.value)}
@@ -311,6 +325,13 @@ function MessageItem({ msg, currentUserId, canDelete, canEdit, onDelete, onEdit 
       {hover && !editing && (canDelete || canEdit) && (
         <div className="absolute right-0 top-0 flex items-center gap-1 px-2 py-1 rounded-xl"
           style={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>
+          <button onClick={() => setReplyTo({ id: msg.id, content: msg.content ?? '', username: p?.username ?? '?' })}
+              className="w-6 h-6 flex items-center justify-center rounded transition-all"
+              style={{ color: 'rgba(255,255,255,0.4)' }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#c044ff'}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.4)'}>
+              <Reply size={12} strokeWidth={2} />
+            </button>
           {canEdit && msg.content && (
             <button onClick={startEdit}
               className="w-6 h-6 flex items-center justify-center rounded transition-all"
