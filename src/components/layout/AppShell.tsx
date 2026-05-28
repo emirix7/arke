@@ -10,6 +10,7 @@ import ChatArea from '@/components/chat/ChatArea'
 import ProfilePanel from '@/components/profile/ProfilePanel'
 import FriendRequests from '@/components/friends/FriendRequests'
 import SettingsPage from '@/components/profile/SettingsPage'
+import VoiceRoom from '@/components/chat/VoiceRoom'
 import IncomingCallBanner from '@/components/chat/IncomingCallBanner'
 import ToastNotification from '@/components/ui/ToastNotification'
 import { useChatStore } from '@/store/chat'
@@ -178,6 +179,11 @@ export default function AppShell() {
       {/* Call overlay moved to ChatArea */}
 
       <ToastNotification />
+
+      {/* VoiceRoom keeps LiveKit connection alive globally - no UI */}
+      {callState.active && callState.token && callState.status === 'connected' && (
+        <VoiceRoom token={callState.token} roomName={callState.roomName} globalMicMuted={micMuted} />
+      )}
 
       {incomingCall && !dnd && (
         <IncomingCallBanner

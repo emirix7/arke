@@ -5,8 +5,8 @@ import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/auth'
 import { useChatStore } from '@/store/chat'
 import { useMessages } from '@/hooks/useMessages'
-import { useVoiceCall } from '@/hooks/useVoiceCall'
 import VoiceCallOverlay from '@/components/chat/VoiceCallOverlay'
+import { useVoiceCall } from '@/hooks/useVoiceCall'
 import { useTyping } from '@/hooks/useTyping'
 import { useReactions } from '@/hooks/useReactions'
 import { playMessageSound } from '@/lib/notificationSound'
@@ -14,9 +14,9 @@ import { format, formatDistanceToNow } from 'date-fns'
 import { tr } from 'date-fns/locale'
 import EmojiPickerBtn from './EmojiPickerBtn'
 import ReplyBar from './ReplyBar'
-import GifPicker from '@/components/ui/GifPicker'
 import VoiceMessageRecorder from '@/components/ui/VoiceMessageRecorder'
 import { LinkText } from '@/components/ui/LinkPreview'
+import ImageViewer from '@/components/ui/ImageViewer'
 import type { DirectMessage } from '@/types/database'
 
 const QUICK_REACTIONS = ['❤️', '😂', '👍', '😮', '😢', '🔥']
@@ -30,15 +30,14 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
   const [sending, setSending] = useState(false)
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState('')
+  const [viewImage, setViewImage] = useState<string | null>(null)
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false)
-  const [showGifPicker, setShowGifPicker] = useState(false)
   const [replyTo, setReplyTo] = useState<{ id: string; content: string; username: string } | null>(null)
   const [voiceError, setVoiceError] = useState('')
   const [showScrollBtn, setShowScrollBtn] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMore, setHasMore] = useState(true)
   const [isBlocked, setIsBlocked] = useState(false)
-  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -51,7 +50,6 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
   const { profile: myProfile } = useAuthStore()
   const { isOtherTyping, sendTyping, stopTyping } = useTyping(convId, other?.id ?? '')
   const { reactions, toggleReaction, fetchReactions } = useReactions(convId)
-
   const convMessages = messages[convId] ?? []
 
   useEffect(() => {
@@ -81,10 +79,17 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
       .neq('sender_id', profile.id)
       .is('read_at', null)
       .select()
-      .then(({ data, error }: any) => {
-        if (error) console.error('read_at error:', error)
-      })
+      .then(({ error }: any) => { if (error) console.error('read_at error:', error) })
   }, [convId, convMessages.length])
+
+  // Check if blocked
+  useEffect(() => {
+    if (!profile || !other) return
+    Promise.all([
+      supabase.from('blocks' as any).select('id').eq('blocker_id', profile.id).eq('blocked_id', other.id).maybeSingle(),
+      supabase.from('blocks' as any).select('id').eq('blocker_id', other.id).eq('blocked_id', profile.id).maybeSingle()
+    ]).then(([{ data: d1 }, { data: d2 }]) => setIsBlocked(!!d1 || !!d2))
+  }, [profile?.id, other?.id])
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return
@@ -117,51 +122,18 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
     if (!profile || !activeConversation) return
     setVoiceError('')
     try {
-      // Upload directly as blob with correct content type
       const path = `voice/${profile.id}_${Date.now()}.webm`
       const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('messages')
-        .upload(path, blob, {
-          contentType: 'audio/webm',
-          upsert: true,
-          cacheControl: '3600'
-        })
-
-      if (uploadError) {
-        console.error('Upload error:', uploadError)
-        setVoiceError('Yükleme hatası: ' + uploadError.message)
-        return
-      }
-
+        .from('messages').upload(path, blob, { contentType: 'audio/webm', upsert: true })
+      if (uploadError) { setVoiceError('Yükleme hatası: ' + uploadError.message); return }
       const { data: { publicUrl } } = supabase.storage.from('messages').getPublicUrl(path)
-
       const { error: insertError } = await (supabase.from('direct_messages') as any).insert({
-        conversation_id: convId,
-        sender_id: profile.id,
-        content: null,
-        image_url: publicUrl,
-        voice_duration: duration
+        conversation_id: convId, sender_id: profile.id,
+        content: null, image_url: publicUrl, voice_duration: duration
       })
-
-      if (insertError) {
-        console.error('Insert error:', insertError)
-        setVoiceError('Gönderme hatası: ' + insertError.message)
-        return
-      }
-
+      if (insertError) { setVoiceError('Gönderme hatası: ' + insertError.message); return }
       setShowVoiceRecorder(false)
-    } catch (e: any) {
-      console.error('Voice error:', e)
-      setVoiceError('Hata: ' + e.message)
-    }
-  }
-
-  const sendGif = async (url: string) => {
-    if (!profile || !activeConversation) return
-    setShowGifPicker(false)
-    await (supabase.from('direct_messages') as any).insert({
-      conversation_id: convId, sender_id: profile.id, content: null, image_url: url
-    })
+    } catch (e: any) { setVoiceError('Hata: ' + e.message) }
   }
 
   const deleteMessage = async (msgId: string) => {
@@ -188,38 +160,50 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
     const oldest = convMessages[0]
     if (!oldest) { setLoadingMore(false); return }
     const { data } = await supabase
-      .from('direct_messages')
-      .select('*')
-      .eq('conversation_id', convId)
-      .is('deleted_at', null)
+      .from('direct_messages').select('*')
+      .eq('conversation_id', convId).is('deleted_at', null)
       .lt('created_at', oldest.created_at)
-      .order('created_at', { ascending: false })
-      .limit(50)
+      .order('created_at', { ascending: false }).limit(50)
     if (data && data.length > 0) {
       useChatStore.setState(state => ({
-        messages: {
-          ...state.messages,
-          [convId]: [...data.reverse(), ...(state.messages[convId] || [])]
-        }
+        messages: { ...state.messages, [convId]: [...data.reverse(), ...(state.messages[convId] || [])] }
       }))
       if (data.length < 50) setHasMore(false)
-    } else {
-      setHasMore(false)
-    }
+    } else { setHasMore(false) }
     setLoadingMore(false)
   }
 
-    const grouped = groupMessages(convMessages.filter(m => {
+  const grouped = groupMessages(convMessages.filter(m => {
     if ((m as any).deleted_at) return false
-    // Filter messages from blocked user
     if (isBlocked && m.sender_id !== profile?.id) return false
     return true
   }))
+
   const lastSeen = other?.status !== 'online' && (other as any)?.updated_at
     ? formatDistanceToNow(new Date((other as any).updated_at), { addSuffix: true, locale: tr }) : null
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative" style={{ background: '#0d0d14' }}>
+
+      {/* 1:1 Call overlay */}
+      {callState.active && (
+        <div className="absolute inset-x-0 top-0 z-50" style={{ height: '50%' }}>
+          <VoiceCallOverlay
+            status={callState.status}
+            currentUser={myProfile}
+            otherUser={other}
+            isIncoming={callState.isIncoming}
+            callerProfile={callState.callerProfile}
+            onEnd={endCall}
+            onLeave={leaveCall}
+            onAccept={acceptCall}
+            onDecline={declineCall}
+            onRejoin={rejoinCall}
+            globalMicMuted={globalMicMuted}
+          />
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 flex-shrink-0"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)' }}>
@@ -238,10 +222,10 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
               : lastSeen ? `Son görülme ${lastSeen}` : other?.status === 'online' ? 'Çevrimiçi' : 'Çevrimdışı'}
           </p>
         </div>
-        <button onClick={startCall}
-          className="w-8 h-8 rounded-lg flex items-center justify-center transition-all"
-          style={{ background: 'rgba(61,255,154,0.08)', border: '1px solid rgba(61,255,154,0.15)', color: '#3dff9a' }}>
-          <Phone size={15} strokeWidth={2} />
+        <button onClick={() => startCall()}
+          className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
+          style={{ background: callState.active ? 'rgba(61,255,154,0.15)' : 'rgba(255,255,255,0.05)', color: callState.active ? '#3dff9a' : 'rgba(255,255,255,0.4)', border: `1px solid ${callState.active ? 'rgba(61,255,154,0.3)' : 'rgba(255,255,255,0.08)'}` }}>
+          <Phone size={15} strokeWidth={1.75} />
         </button>
       </div>
 
@@ -249,84 +233,80 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
       <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-1 relative"
         onScroll={e => {
           const el = e.currentTarget
-          const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-          setShowScrollBtn(distFromBottom > 200)
+          setShowScrollBtn(el.scrollHeight - el.scrollTop - el.clientHeight > 200)
           if (el.scrollTop < 100) loadMoreMessages()
         }}>
         {hasMore && (
           <div className="flex justify-center py-2">
             <button onClick={loadMoreMessages} disabled={loadingMore}
-              className="text-xs px-3 py-1.5 rounded-xl transition-all"
+              className="text-xs px-3 py-1.5 rounded-xl"
               style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.08)' }}>
               {loadingMore ? 'Yükleniyor...' : '↑ Daha eski mesajlar'}
             </button>
           </div>
         )}
         {grouped.map((group, gi) => (
-          <MessageGroup key={gi} group={group} currentUserId={profile?.id ?? ''}
-            reactions={reactions} onReact={toggleReaction}
-            onDelete={deleteMessage} onEdit={editMessage}
-            onReply={(msg) => setReplyTo({
-              id: msg.id,
-              content: msg.content ?? '',
-              username: msg.sender_id === profile?.id ? (profile?.username ?? 'Sen') : (other?.username ?? '?')
-            })}
-            otherUser={other} currentUser={profile} />
+          <MessageGroup
+            key={group[0].id + gi}
+            group={group}
+            currentUserId={profile?.id ?? ''}
+            reactions={reactions}
+            onReact={toggleReaction}
+            onDelete={deleteMessage}
+            onEdit={editMessage}
+            onReply={msg => setReplyTo({ id: msg.id, content: msg.content ?? '', username: other?.username ?? '' })}
+            onViewImage={setViewImage}
+            otherUser={other}
+            currentUser={profile}
+          />
         ))}
         {isOtherTyping && (
-          <div className="flex items-end gap-2 mb-2">
-            <div className="w-7 h-7 rounded-full overflow-hidden flex items-center justify-center text-xs font-semibold text-white flex-shrink-0"
-              style={{ background: 'linear-gradient(135deg, #ff6b9d, #c044ff)' }}>
-              {other?.avatar_url ? <img src={other.avatar_url} alt="" className="w-full h-full object-cover" /> : (other?.username ?? '').slice(0, 2).toUpperCase()}
+          <div className="flex items-center gap-2 px-3 py-2">
+            <div className="flex gap-1">
+              {[0,1,2].map(i => <div key={i} className="w-1.5 h-1.5 rounded-full" style={{ background: '#c044ff', animation: `pulse-dot ${0.6+i*0.15}s ease-in-out infinite alternate` }} />)}
             </div>
-            <div className="px-4 py-3 rounded-2xl rounded-bl-sm flex items-center gap-1"
-              style={{ background: 'rgba(255,255,255,0.07)' }}>
-              {[0,1,2].map(i => (
-                <div key={i} className="w-1.5 h-1.5 rounded-full"
-                  style={{ background: '#c044ff', animation: `pulse-dot 1s ease-in-out ${i * 0.2}s infinite` }} />
-              ))}
-            </div>
+            <span className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>yazıyor...</span>
           </div>
         )}
         <div ref={bottomRef} />
       </div>
+
       {showScrollBtn && (
-        <button
-          onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
-          className="absolute flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold transition-all"
-          style={{ bottom: 80, left: '50%', transform: 'translateX(-50%)', background: 'rgba(192,68,255,0.9)', color: 'white', border: '1px solid rgba(192,68,255,0.5)', boxShadow: '0 4px 16px rgba(192,68,255,0.4)', zIndex: 10 }}>
+        <button onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+          className="absolute flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold"
+          style={{ bottom: 80, left: '50%', transform: 'translateX(-50%)', background: 'rgba(192,68,255,0.9)', color: 'white', border: '1px solid rgba(192,68,255,0.5)', zIndex: 10 }}>
           <ChevronDown size={14} strokeWidth={2.5} /> Yeni mesajlar
         </button>
       )}
 
+      {/* Reply bar */}
+      {replyTo && <ReplyBar reply={replyTo} onCancel={() => setReplyTo(null)} />}
+
+      {/* Voice recorder */}
+      {showVoiceRecorder && (
+        <div className="px-5 pb-3 flex-shrink-0">
+          <VoiceMessageRecorder
+            onSend={sendVoiceMessage}
+            onCancel={() => { setShowVoiceRecorder(false); setVoiceError('') }} />
+          {voiceError && <p className="text-xs mt-1" style={{ color: '#ff6b9d' }}>{voiceError}</p>}
+        </div>
+      )}
+
+      {/* Image preview */}
       {imagePreview && (
         <div className="px-5 pb-2 flex-shrink-0">
           <div className="relative inline-block">
-            <img src={imagePreview} alt="" className="rounded-xl object-cover" style={{ maxHeight: 100, maxWidth: 180 }} />
+            <img src={imagePreview} alt="" className="rounded-xl" style={{ maxHeight: 100, maxWidth: 180, objectFit: 'cover' }} />
             <button onClick={() => { setImageFile(null); setImagePreview('') }}
-              className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center"
-              style={{ background: '#ff6b9d', color: 'white' }}>
+              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center"
+              style={{ background: '#ff6b9d', border: '2px solid #0d0d14', color: 'white' }}>
               <X size={10} strokeWidth={3} />
             </button>
           </div>
         </div>
       )}
 
-      <ReplyBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
-
-      {voiceError && (
-        <div className="mx-5 mb-1 px-3 py-2 rounded-xl text-xs flex-shrink-0"
-          style={{ background: 'rgba(255,107,157,0.1)', color: '#ff6b9d', border: '1px solid rgba(255,107,157,0.2)' }}>
-          {voiceError}
-        </div>
-      )}
-
-      {showVoiceRecorder && (
-        <div className="px-5 pb-2 flex-shrink-0">
-          <VoiceMessageRecorder onSend={sendVoiceMessage} onCancel={() => { setShowVoiceRecorder(false); setVoiceError('') }} />
-        </div>
-      )}
-
+      {/* Input */}
       {isBlocked ? (
         <div className="px-5 pb-4 pt-2 flex-shrink-0">
           <div className="px-4 py-3 rounded-2xl text-sm text-center"
@@ -336,75 +316,49 @@ export default function ChatArea({ globalMicMuted }: ChatAreaProps) {
         </div>
       ) : !showVoiceRecorder && (
         <div className="px-5 pb-4 pt-2 flex-shrink-0">
-          <div className="flex items-center gap-2 px-3 py-2.5 rounded-2xl"
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl"
             style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
             <button onClick={() => fileRef.current?.click()}
-              className="flex-shrink-0 flex items-center justify-center"
+              className="flex-shrink-0 transition-all"
               style={{ color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>
               <Paperclip size={16} strokeWidth={1.75} />
             </button>
-            <input ref={fileRef} type="file" accept="image/*,.gif" className="hidden" onChange={handleImageSelect} />
-            <input ref={inputRef} className="flex-1 bg-transparent outline-none text-sm"
-              style={{ color: '#e8e6f0', fontFamily: 'DM Sans, sans-serif' }}
-              placeholder={`${other?.username ?? ''} kişisine mesaj yaz...`}
-              value={input} onChange={handleInput} onKeyDown={handleKey} onBlur={() => stopTyping()} />
-            <div className="flex items-center gap-1 flex-shrink-0 relative">
-              <button onClick={() => setShowGifPicker(p => !p)}
-                className="px-1.5 py-1 rounded-lg text-xs font-bold"
-                style={{ color: showGifPicker ? '#c044ff' : 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>
-                GIF
+            <input ref={inputRef} value={input} onChange={handleInput} onKeyDown={handleKey}
+              placeholder={`${other?.username} kişisine mesaj yaz...`}
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: '#f0eeff', fontFamily: 'DM Sans, sans-serif' }} />
+            <EmojiPickerBtn onEmoji={emoji => setInput(p => p + emoji)} />
+            {!input.trim() && !imageFile && (
+              <button onClick={() => { setShowVoiceRecorder(true); setVoiceError('') }}
+                className="w-7 h-7 flex items-center justify-center"
+                style={{ color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                <Mic size={15} strokeWidth={1.75} />
               </button>
-              {showGifPicker && <GifPicker onSelect={sendGif} onClose={() => setShowGifPicker(false)} />}
-              <EmojiPickerBtn onEmoji={emoji => setInput(p => p + emoji)} />
-              {!input.trim() && !imageFile && (
-                <button onClick={() => { setShowVoiceRecorder(true); setVoiceError('') }}
-                  className="w-7 h-7 flex items-center justify-center"
-                  style={{ color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>
-                  <Mic size={15} strokeWidth={1.75} />
-                </button>
-              )}
-              <button onClick={sendMessage} disabled={(!input.trim() && !imageFile) || sending}
-                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
-                style={{
-                  background: (input.trim() || imageFile) ? 'linear-gradient(135deg, #c044ff, #00d4ff)' : 'rgba(255,255,255,0.05)',
-                  color: (input.trim() || imageFile) ? 'white' : 'rgba(255,255,255,0.3)',
-                  border: 'none', cursor: (input.trim() || imageFile) ? 'pointer' : 'not-allowed',
-                }}>
-                <Send size={14} strokeWidth={2} />
-              </button>
-            </div>
+            )}
+            <button onClick={sendMessage} disabled={(!input.trim() && !imageFile) || sending}
+              className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
+              style={{
+                background: (input.trim() || imageFile) ? 'linear-gradient(135deg, #c044ff, #00d4ff)' : 'rgba(255,255,255,0.05)',
+                color: (input.trim() || imageFile) ? 'white' : 'rgba(255,255,255,0.3)',
+                border: 'none', cursor: (input.trim() || imageFile) ? 'pointer' : 'not-allowed',
+              }}>
+              <Send size={14} strokeWidth={2} />
+            </button>
           </div>
+          <input ref={fileRef} type="file" accept="image/*,.gif" className="hidden" onChange={handleImageSelect} />
         </div>
       )}
-      {/* 1:1 Call overlay - renders inside chat area */}
-      {callState.active && (
-        <div className="absolute inset-x-0 top-0 z-50" style={{ height: '50%' }}>
-          <VoiceCallOverlay
-            roomName={callState.roomName}
-            token={callState.token}
-            status={callState.status}
-            currentUser={myProfile}
-            otherUser={other}
-            isIncoming={callState.isIncoming}
-            callerProfile={callState.callerProfile}
-            onEnd={endCall}
-            onLeave={leaveCall}
-            onAccept={acceptCall}
-            onDecline={declineCall}
-            onRejoin={rejoinCall}
-            globalMicMuted={globalMicMuted}
-          />
-        </div>
-      )}
+
+      {viewImage && <ImageViewer src={viewImage} onClose={() => setViewImage(null)} />}
     </div>
   )
 }
 
-function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEdit, onReply, otherUser, currentUser }: {
+function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEdit, onReply, onViewImage, otherUser, currentUser }: {
   group: DirectMessage[]; currentUserId: string
   reactions: Record<string, any[]>; onReact: (id: string, emoji: string) => void
   onDelete: (id: string) => void; onEdit: (id: string, content: string) => void
-  onReply: (msg: DirectMessage) => void
+  onReply: (msg: DirectMessage) => void; onViewImage: (url: string) => void
   otherUser?: any; currentUser?: any
 }) {
   const isOwn = group[0].sender_id === currentUserId
@@ -430,7 +384,8 @@ function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEd
         return (
           <div key={msg.id} className="relative w-full"
             onMouseEnter={() => setHoveredMsg(msg.id)}
-            onMouseLeave={() => setHoveredMsg(null)}>
+            onMouseLeave={() => setHoveredMsg(null)}
+            onContextMenu={e => { e.preventDefault(); if (msg.content) setContextMenu({ msgId: msg.id, x: e.clientX, y: e.clientY, content: msg.content }) }}>
             <div className={`flex items-end gap-2 ${isOwn ? 'flex-row-reverse' : ''}`}>
               <div className="w-7 h-7 flex-shrink-0">
                 {!isOwn && i === group.length - 1 && (
@@ -450,20 +405,19 @@ function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEd
                   </div>
                 )}
                 {(msg as any).image_url && (
-                  (msg as any).image_url.includes('.webm') || (msg as any).voice_duration ? (
+                  (msg as any).voice_duration ? (
                     <div className="mb-1">
                       <audio controls src={(msg as any).image_url}
-                        style={{ height: 40, maxWidth: 260, borderRadius: 12, background: 'rgba(255,255,255,0.05)' }} />
-                      {(msg as any).voice_duration && (
-                        <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                          🎤 {Math.floor((msg as any).voice_duration / 60)}:{((msg as any).voice_duration % 60).toString().padStart(2,'0')}
-                        </p>
-                      )}
+                        style={{ height: 40, maxWidth: 260, borderRadius: 12 }} />
+                      <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                        🎤 {Math.floor((msg as any).voice_duration / 60)}:{((msg as any).voice_duration % 60).toString().padStart(2,'0')}
+                      </p>
                     </div>
                   ) : (
-                    <img src={(msg as any).image_url} alt="" className="rounded-xl mb-1 cursor-pointer"
+                    <img src={(msg as any).image_url} alt=""
+                      className="rounded-xl mb-1 cursor-pointer hover:opacity-90 transition-opacity"
                       style={{ maxWidth: 280, maxHeight: 280, objectFit: 'cover', display: 'block' }}
-                      onClick={() => window.open((msg as any).image_url, '_blank')} />
+                      onClick={() => onViewImage((msg as any).image_url)} />
                   )
                 )}
                 {isEditing ? (
@@ -471,7 +425,7 @@ function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEd
                     <input value={editText} onChange={e => setEditText(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') submitEdit(msg.id); if (e.key === 'Escape') setEditingId(null) }}
                       className="px-3 py-2 rounded-xl text-sm outline-none"
-                      style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(192,68,255,0.4)', color: '#e8e6f0', fontFamily: 'DM Sans, sans-serif', minWidth: 200 }}
+                      style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(192,68,255,0.4)', color: '#e8e6f0', minWidth: 200 }}
                       autoFocus />
                     <button onClick={() => submitEdit(msg.id)} style={{ color: '#3dff9a' }}><Check size={14} strokeWidth={2.5} /></button>
                     <button onClick={() => setEditingId(null)} style={{ color: '#ff6b9d' }}><X size={14} strokeWidth={2.5} /></button>
@@ -500,7 +454,6 @@ function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEd
                   </div>
                 )}
               </div>
-
               {hoveredMsg === msg.id && !isEditing && (
                 <div className={`absolute ${isOwn ? 'right-10' : 'left-10'} -top-8 flex items-center gap-1 px-2 py-1 rounded-xl z-10`}
                   style={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}>
@@ -510,35 +463,27 @@ function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEd
                       {emoji}
                     </button>
                   ))}
-                  <button onClick={() => onReply(msg)}
-                    className="w-6 h-6 flex items-center justify-center rounded ml-1 transition-all"
-                    style={{ color: 'rgba(255,255,255,0.5)' }}
+                  <button onClick={() => onReply(msg)} className="w-6 h-6 flex items-center justify-center rounded ml-1" style={{ color: 'rgba(255,255,255,0.5)' }}
                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#c044ff'}
                     onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.5)'}>
                     <Reply size={12} strokeWidth={2} />
                   </button>
                   {msg.content && (
-                    <button onClick={() => navigator.clipboard.writeText(msg.content ?? '')}
-                      className="w-6 h-6 flex items-center justify-center rounded transition-all"
-                      style={{ color: 'rgba(255,255,255,0.5)' }}
+                    <button onClick={() => navigator.clipboard.writeText(msg.content ?? '')} className="w-6 h-6 flex items-center justify-center rounded" style={{ color: 'rgba(255,255,255,0.5)' }}
                       onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#3dff9a'}
                       onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.5)'}>
                       <Copy size={12} strokeWidth={2} />
                     </button>
                   )}
                   {isOwn && msg.content && (
-                    <button onClick={() => startEdit(msg)}
-                      className="w-6 h-6 flex items-center justify-center rounded transition-all"
-                      style={{ color: 'rgba(255,255,255,0.5)' }}
+                    <button onClick={() => startEdit(msg)} className="w-6 h-6 flex items-center justify-center rounded" style={{ color: 'rgba(255,255,255,0.5)' }}
                       onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#c044ff'}
                       onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.5)'}>
                       <Pencil size={12} strokeWidth={2} />
                     </button>
                   )}
                   {isOwn && (
-                    <button onClick={() => onDelete(msg.id)}
-                      className="w-6 h-6 flex items-center justify-center rounded transition-all"
-                      style={{ color: 'rgba(255,255,255,0.5)' }}
+                    <button onClick={() => onDelete(msg.id)} className="w-6 h-6 flex items-center justify-center rounded" style={{ color: 'rgba(255,255,255,0.5)' }}
                       onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#ff6b9d'}
                       onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.5)'}>
                       <Trash2 size={12} strokeWidth={2} />
@@ -556,14 +501,14 @@ function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEd
           <div className="fixed z-[401] rounded-xl overflow-hidden py-1"
             style={{ left: Math.min(contextMenu.x, window.innerWidth - 180), top: Math.min(contextMenu.y, window.innerHeight - 180), background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', minWidth: 168 }}>
             <button onClick={() => { navigator.clipboard.writeText(contextMenu.content); setContextMenu(null) }}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-all"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left"
               style={{ color: 'rgba(255,255,255,0.7)' }}
               onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'}
               onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
               <Copy size={13} strokeWidth={2} /> Kopyala
             </button>
             <button onClick={() => { onReply(group.find(m => m.id === contextMenu.msgId)!); setContextMenu(null) }}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-all"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left"
               style={{ color: 'rgba(255,255,255,0.7)' }}
               onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'}
               onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
@@ -571,7 +516,7 @@ function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEd
             </button>
             {isOwn && (
               <button onClick={() => { const m = group.find(g => g.id === contextMenu.msgId); if(m) startEdit(m); setContextMenu(null) }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-all"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left"
                 style={{ color: 'rgba(255,255,255,0.7)' }}
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
@@ -580,7 +525,7 @@ function MessageGroup({ group, currentUserId, reactions, onReact, onDelete, onEd
             )}
             {isOwn && (
               <button onClick={() => { onDelete(contextMenu.msgId); setContextMenu(null) }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-all"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left"
                 style={{ color: '#ff6b9d' }}
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,107,157,0.08)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>

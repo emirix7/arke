@@ -149,7 +149,9 @@ export default function VoiceChannel({ channel, onLeave, globalMicMuted }: Voice
     const joinSession = async () => {
       // Remove own old sessions + stale sessions older than 10 min
       await supabase.from('voice_sessions').delete().eq('user_id', profile.id)
+      // Only delete own stale sessions (RLS restriction)
       await supabase.from('voice_sessions').delete()
+        .eq('user_id', profile.id)
         .lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
       await new Promise(r => setTimeout(r, 100))
       await supabase.from('voice_sessions').insert({ channel_id: channel.id, user_id: profile.id })
@@ -426,13 +428,17 @@ export default function VoiceChannel({ channel, onLeave, globalMicMuted }: Voice
           onClick={() => setFullscreenShare(null)}>
           <div className="relative w-full h-full flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
             {fullscreenShare === 'local' ? (
-              <video ref={el => { if (el && localScreenRef.current?.srcObject) el.srcObject = localScreenRef.current.srcObject }}
+              <video ref={el => { 
+                if (el && localScreenRef.current?.srcObject) {
+                  el.srcObject = localScreenRef.current.srcObject as MediaStream
+                }
+              }}
                 autoPlay muted playsInline className="max-w-full max-h-full rounded-xl" style={{ objectFit: 'contain' }} />
             ) : (
               <video ref={el => {
-                if (el) {
+                if (el && fullscreenShare) {
                   const src = screenVideoRefs.current.get(fullscreenShare)
-                  if (src?.srcObject) el.srcObject = src.srcObject
+                  if (src?.srcObject) el.srcObject = src.srcObject as MediaStream
                 }
               }} autoPlay playsInline className="max-w-full max-h-full rounded-xl" style={{ objectFit: 'contain' }} />
             )}
